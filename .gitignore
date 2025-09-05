@@ -1,0 +1,36 @@
+# 🔹 Environment files
+.env
+*.env
+
+# 🔹 Python cache & bytecode
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# 🔹 Virtual environments
+.venv/
+venv/
+env/
+
+# 🔹 Data and dumps
+*.db
+*.sqlite3
+*.sql
+*.csv
+!/data/*.csv
+/data/top_profiles/
+backup.sql
+
+# 🔹 Logs
+*.log
+logs/
+
+# 🔹 OS / IDE clutter
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# 🔹 Jupyter notebooks checkpoints
+.ipynb_checkpoints/

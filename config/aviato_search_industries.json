@@ -1,0 +1,82 @@
+{
+    "search_filters": [
+      {
+        "name": "fintech",
+        "description": "Financial technology, payments, insurance, and security companies",
+        "source": "Fintech & Financial Services Search",
+        "filter": {
+          "region": "California",
+          "industryList": ["FinTech", "Financial Services", "Security", "Insurance", "InsurTech", "Payments"]
+        }
+      },
+      {
+        "name": "health_wellness",
+        "description": "Beauty, fitness, personal health, and wellness companies",
+        "source": "Health & Wellness Search",
+        "filter": {
+          "country": "United States",
+          "region": "California",
+          "industryList": ["Beauty", "Fitness", "Health Information Technology", "Personal Health", "Wellness"]
+        }
+      },
+      {
+        "name": "biotech_pharma",
+        "description": "Biotechnology, digital health, genetics, and pharmaceutical companies",
+        "source": "Biotech & Pharmaceutical Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Biotechnology", "Digital Health", "Genetics", "Pharmaceutical"]
+        }
+      },
+      {
+        "name": "healthcare",
+        "description": "Healthcare, health insurance, and medical companies",
+        "source": "Healthcare & Medical Search",
+        "filter": {
+          "country": "United States",
+          "region": "California",
+          "industryList": ["Health Care", "Health Insurance", "Healthcare", "Medical"]
+        }
+      },
+      {
+        "name": "commerce_retail",
+        "description": "E-commerce, retail, advertising, content, and consumer companies",
+        "source": "Commerce & Retail Search",
+        "filter": {
+          "country": "United States",
+          "region": "California",
+          "industryList": ["Advertising", "Content", "Content Marketing", "Consumer", "E-Commerce", "Fashion", "Product research", "Retail", "Retail Technology", "Sales"]
+        }
+      },
+      {
+        "name": "industrial_manufacturing",
+        "description": "Industrial, manufacturing, and materials companies",
+        "source": "Industrial & Manufacturing Search",
+        "filter": {
+          "country": "United States",
+          "region": "California",
+          "industryList": ["Industrial", "Manufacturing", "Materials"]
+        }
+      },
+      {
+        "name": "robotics",
+        "description": "Robotics companies",
+        "source": "Robotics Search",
+        "filter": {
+          "country": "United States",
+          "region": "California",
+          "industryList": ["Robotics"]
+        }
+      },
+      {
+        "name": "gaming_ar_vr",
+        "description": "Video games, 3D technology, VR, and AR companies",
+        "source": "Gaming, AR & VR Search",
+        "filter": {
+          "country": "United States",
+          "region": "California",
+          "industryList": ["Video Games", "3D Technology", "VR", "AR"]
+        }
+      }
+    ]
+  }
