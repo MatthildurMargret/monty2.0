@@ -165,15 +165,20 @@ def import_pipeline(ID):
         founder = entry['properties']['Founder']['rich_text'][0]['plain_text'] if entry['properties']['Founder'][
             'rich_text'] else ""
 
-        if 'Last contact' in entry['properties']:
-            date = entry['properties']['Last contact']['date']['start'] if entry['properties']['Last contact']['date'] else "No date"
+        if 'Last Contact' in entry['properties']:
+            date = entry['properties']['Last Contact']['date']['start'] if entry['properties']['Last Contact']['date'] else "No date"
         else:
             date = "No date"
 
-        location = entry['properties']['Location']['rich_text'][0]['plain_text'] if entry['properties']['Location'][
-            'rich_text'] else "No location"
+        location = entry['properties']['Location']['select']['name'] if entry['properties']['Location'][
+            'select'] else "No location"
+
+        description = entry['properties']['Brief Description']['rich_text'][0]['plain_text'] if entry['properties']['Brief Description'][
+            'rich_text'] else "No description"
 
         website = entry['properties']['Website']['rich_text'][0]['plain_text'] if entry['properties']['Website']['rich_text'] else "No website"
+
+        sector = [t["name"] for t in entry["properties"]["Sector"]["multi_select"]] if entry["properties"]["Sector"]["multi_select"] else []
     
         # Append as a dictionary to the list
         data.append({
@@ -182,7 +187,9 @@ def import_pipeline(ID):
             "founder": founder,
             "date": date,
             "location": location,
-            "website": website
+            "website": website,
+            "description": description,
+            "sector": sector
         })
 
     # Convert list of dictionaries to DataFrame

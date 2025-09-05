@@ -680,6 +680,13 @@ def combine_previous_scrapes():
 
     return already_scraped_urls
 
+def heavy_clean(url):
+    if not url:
+        return None
+    if "https://www." not in url:
+        return url
+    return url.split("https://www.")[1]
+
 def cleanup_search_list():
     """
     Clean up the search_list and stealth_search_list tables by removing entries that have already been processed.

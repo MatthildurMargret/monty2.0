@@ -19,6 +19,7 @@ env/
 *.sql
 *.csv
 !/data/*.csv
+!/data/deal_data/**
 /data/top_profiles/
 backup.sql
 

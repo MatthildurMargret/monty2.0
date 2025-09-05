@@ -1313,9 +1313,9 @@ if __name__ == "__main__":
             for search_config in data.get("search_filters", []):
                 aviato_search(search_config.get("filter", {}), search_config.get("source", "aviato_search"))
     else:
-        process_profiles_aviato(max_profiles=400)
-        add_monty_data()
-        add_ai_scoring()
+        #process_profiles_aviato(max_profiles=400)
+        #add_monty_data()
+        #add_ai_scoring()
         add_tree_analysis()
 
 
