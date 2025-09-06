@@ -10,6 +10,17 @@ openai_api_key = os.getenv("OPENAI_API_KEY")
 
 client = OpenAI(api_key=openai_api_key)
 
+def get_tree_path():
+    """Get the correct path to taste_tree.json relative to the project root."""
+    return os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "taste_tree.json")
+
+# Configuration flag to enable/disable tree writes (disabled for Railway deployment)
+ENABLE_TREE_WRITES = False
+
+def can_write_tree():
+    """Check if tree writes are enabled."""
+    return ENABLE_TREE_WRITES
+
 def format_child_context(children):
     """Format metadata summaries for each child category."""
     lines = []
@@ -391,7 +402,7 @@ def update_taste_tree_with_key(key):
     import json
     
     # Load the current tree
-    with open('/Users/matthildur/monty/data/taste_tree.json', 'r') as f:
+    with open(get_tree_path(), 'r') as f:
         taste_tree = json.load(f)
     
     print(f"Adding '{key}' key to all nodes...")
@@ -401,11 +412,11 @@ def update_taste_tree_with_key(key):
         print(f"Processing category: {category_name}")
         add_key_to_all_nodes(category_node, key)
     
-    # Save the updated tree back to file
-    with open('/Users/matthildur/monty/data/taste_tree.json', 'w') as f:
-        json.dump(taste_tree, f, indent=2)
+    # Save the updated tree back to file - DISABLED for Railway deployment
+    # with open(get_tree_path(), 'w') as f:
+    #     json.dump(taste_tree, f, indent=2)
     
-    print(f"Successfully updated taste_tree.json with '{key}' keys!")
+    print(f"Would update taste_tree.json with '{key}' keys (write disabled for deployment)")
     print(f"All nodes now have an empty '{key}' field in their metadata.")
 
 def suggest_leaf(trace, company_description):
@@ -487,7 +498,7 @@ def add_leaf_to_tree(root, path, new_leaf_name, default_meta=None):
 
 
 def analyze_company(company_description, founder_description, company_info, investment_theses):
-    with open('/Users/matthildur/monty/data/taste_tree.json', 'r') as f:
+    with open(get_tree_path(), 'r') as f:
         taste_tree = json.load(f)
         
     new_leafs = []
@@ -524,8 +535,10 @@ def analyze_company(company_description, founder_description, company_info, inve
     # print("\nFinal recommendation:", final_recommendation['recommendation'])
     # rint("Justification:", final_recommendation['justification'])
 
-    with open('/Users/matthildur/monty/data/taste_tree.json', 'w') as f:
-        json.dump(root_node["children"], f, indent=2)
+    # Tree write disabled for Railway deployment
+    # with open(get_tree_path(), 'w') as f:
+    #     json.dump(root_node["children"], f, indent=2)
+    print("Tree analysis complete (write to file disabled for deployment)")
 
     return final_recommendation, trace
 
@@ -533,7 +546,7 @@ def insert_thought_into_tree(thought):
     """Insert a thought/insight into the most relevant node in the taste tree."""
     
     # Load the tree
-    with open('/Users/matthildur/monty/data/taste_tree.json', 'r') as f:
+    with open(get_tree_path(), 'r') as f:
         taste_tree = json.load(f)
     
     # Create a root node structure to match the expected format
@@ -566,9 +579,10 @@ def insert_thought_into_tree(thought):
         #    root_node['meta']['investment_status'] = suggested_status.capitalize()
         #    print(f"Set investment_status to '{suggested_status.capitalize()}' for root node")
         
-        # Save updated tree
-        with open('/Users/matthildur/monty/data/taste_tree.json', 'w') as f:
-            json.dump(root_node['children'], f, indent=2)  # Save back the actual tree
+        # Save updated tree - DISABLED for Railway deployment
+        # with open(get_tree_path(), 'w') as f:
+        #     json.dump(root_node['children'], f, indent=2)  # Save back the actual tree
+        print("Thought insertion complete (write to file disabled for deployment)")
         return
     elif not best_node_path:
         print("Could not find a suitable node for this thought")
@@ -685,9 +699,10 @@ def insert_thought_into_tree(thought):
         #        dup_target_node['meta']['investment_status'] = suggested_status.capitalize()
         #        print(f"Set investment_status to '{suggested_status.capitalize()}' for {duplicate['full_path']}")
     
-    # Save the updated tree back to file
-    with open('/Users/matthildur/monty/data/taste_tree.json', 'w') as f:
-       json.dump(taste_tree, f, indent=2)
+    # Save the updated tree back to file - DISABLED for Railway deployment
+    # with open(get_tree_path(), 'w') as f:
+    #    json.dump(taste_tree, f, indent=2)
+    print("Portfolio company insertion complete (write to file disabled for deployment)")
     
 def find_best_node_for_thought(node, thought, path=None):
     if path is None:
@@ -971,7 +986,7 @@ def test_tree():
         investment_theses = json.load(f)
     conn = get_db_connection()
     cursor = conn.cursor()
-    print("Got ", len(df), " profiels to check")
+    print("Got ", len(df), " profiles to check")
 
     for index, row in df.iterrows():
         # Handle None values by converting to empty strings
@@ -1064,7 +1079,7 @@ def insert_company_into_tree(company_data):
     """Insert a portfolio company into the most relevant node in the taste tree."""
     
     # Load the taste tree
-    with open('/Users/matthildur/monty/data/taste_tree.json', 'r') as f:
+    with open(get_tree_path(), 'r') as f:
         taste_tree = json.load(f)
     
     # Extract relevant company information
@@ -1174,7 +1189,7 @@ def insert_company_into_tree(company_data):
         print(f"✅ Successfully added {company_name} to {nodes_updated} nodes named '{final_node_name}'")
         
         # Save the updated tree
-        #with open('/Users/matthildur/monty/data/taste_tree.json', 'w') as f:
+        #with open(get_tree_path(), 'w') as f:
         #    json.dump(taste_tree, f, indent=2)
     else:
         print(f"⚠ {company_name} was not added to any nodes (already exists or errors occurred)")
@@ -1242,7 +1257,7 @@ def get_all_nodes():
                     collect_titles(content['children'], titles)
 
     # Load the JSON file
-    with open('/Users/matthildur/monty/data/taste_tree.json', 'r') as f:
+    with open(get_tree_path(), 'r') as f:
         tree_data = json.load(f)
 
     # Collect titles
@@ -1272,7 +1287,7 @@ def get_nodes_and_names():
                 traverse_and_collect(content['children'], new_path, lead_to_nodes)
 
     # Load JSON file
-    with open('/Users/matthildur/monty/data/taste_tree.json', 'r') as f:
+    with open(get_tree_path(), 'r') as f:
         tree_data = json.load(f)
 
     # Dictionary to hold the mapping
@@ -1307,7 +1322,7 @@ def find_max_depths(node, path=None, depth=0, results=None):
     return results
 
 def analyze_depth():
-    with open('/Users/matthildur/monty/data/taste_tree.json', 'r') as f:
+    with open(get_tree_path(), 'r') as f:
         taste_tree = json.load(f)
 
     # Wrap in root node to match expected format
@@ -1362,7 +1377,7 @@ def update_tree_from_gsheets():
     df = read_tree_from_gsheets()
     print(df.columns)
 
-    tree_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "taste_tree.json")
+    tree_path = get_tree_path()
     with open(tree_path, "r", encoding="utf-8") as f:
         tree = json.load(f)
     # Wrap raw tree dict so lookups can use a 'children' root as expected
@@ -1433,8 +1448,10 @@ def update_tree_from_gsheets():
                 updates += 1
 
     if updates > 0:
-        with open(tree_path, "w", encoding="utf-8") as f:
-            json.dump(tree, f, ensure_ascii=False, indent=2)
+        # Tree write disabled for Railway deployment
+        # with open(tree_path, "w", encoding="utf-8") as f:
+        #     json.dump(tree, f, ensure_ascii=False, indent=2)
+        print(f"Would save {updates} updates to tree (write disabled for deployment)")
         print("Found some updates")
     print(f"Updated {updates} nodes. Missing path matches: {missing_paths}. Name-only updates applied for {name_only_updates} rows.")
 
@@ -1498,7 +1515,7 @@ def find_similar_nodes(root_node, name):
 # test_tree()
 # get_all_nodes()
 # get_nodes_and_names()
-#with open("/Users/matthildur/monty/data/taste_tree.json") as f:
+#with open(get_tree_path()) as f:
 #    tree = json.load(f)
 #root = {"meta": {}, "children": tree}
 #rows = flatten_tree(root)

@@ -98,15 +98,12 @@ def create_company_description(company_row):
     company_name = company_row.get('company_name', 'Unknown Company')
     description = company_row.get('description', '')
     sector = company_row.get('sector', [])
-    website = company_row.get('website', '')
     
     parts = [f"Company: {company_name}"]
     if description and str(description) != 'nan' and description != 'No description':
         parts.append(f"Description: {description}")
     if sector and isinstance(sector, list) and len(sector) > 0:
         parts.append(f"Sectors: {', '.join(sector)}")
-    if website and str(website) != 'nan' and website != 'No website':
-        parts.append(f"Website: {website}")
     
     return ". ".join(parts)
 
