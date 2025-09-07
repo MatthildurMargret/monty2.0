@@ -142,9 +142,31 @@ def enrich_profile(linkedin_id, linkedin_url=None):
         logger.error("JSON decode error for LinkedIn ID %s: %s | Snippet: %s", linkedin_id, e, response.text[:200])
         return None
 
+def sort_search_list(search_df):
+    # Sort profiles to prioritize founder-related titles
+    if 'title' in search_df.columns:
+        # Create a priority score column based on founder-related keywords in the title
+        founder_keywords = ['founder', 'building', 'ceo', 'cto', 'chief executive officer', 'chief technical officer', 'co-founder']
+        
+        # Initialize priority score column with zeros
+        search_df['priority_score'] = 0
+        
+        # Increase score for each keyword found in the title
+        for keyword in founder_keywords:
+            # Handle NaN values with fillna
+            search_df['priority_score'] += search_df['title'].fillna('').str.lower().str.contains(keyword, case=False, na=False).astype(int)
+        
+        # Sort by priority score (descending)
+        search_df = search_df.sort_values(by='priority_score', ascending=False)
+        
+        # Drop the temporary priority_score column
+        search_df = search_df.drop(columns=['priority_score'])
+        
+        print(f"Sorted profiles by founder-related keywords in title. Processing high-priority profiles first.")
+    return search_df
+
 def get_search_urls():
     from services.database import fetch_profiles_from_db
-    from workflows.profile_processing import sort_search_list
 
     search_df = fetch_profiles_from_db("search_list")
     search_df = sort_search_list(search_df)
