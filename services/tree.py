@@ -99,8 +99,8 @@ def traverse_tree(node, company_description, path=None, trace=None):
 
     prompt = f"""
 
-Your task is to classify a company by selecting the most appropriate sub-category from a list. 
-Each sub-category includes a description to help guide your decision.
+Your task is to classify a company by selecting the most appropriate category from a list. 
+Each category includes a description to help guide your decision.
 
 Company:
 ---
@@ -114,16 +114,12 @@ Sub-categories (with context):
 
 From an investment perspective, which of these categories is the best fit for this company?
 
-If there is absolutely no way the company fits into any of the categories, and you don't foresee it fitting into any sub-categories of the given options, 
-respond with a suggestion for a new category. The new category would have to be broad enough so that many other companies would fit into it as well, and it can't overlap with the existing options.
-The new category has to have the same level of generalization as the existing options - don't suggest a new category based on the company's name or description, only if there is no other way to categorize this area.
-Think carefully before suggesting a new node - it doesn't have to fit absolutely perfectly into the existing nodes, and we DON'T want to create duplicate nodes. 
 You need to cut through the fluff and think about what the company really does, and from there find the best category for it. 
 
 CRITICAL OUTPUT REQUIREMENT:
 Your output MUST BE ONLY ONE STRING containing the chosen category name.
 DO NOT write explanations, labels, punctuation, or phrases like 'New category:' or 'None of the categories fit'.
-Return ONLY the category name or the new category suggestion. NOTHING ELSE.
+Return ONLY the category name. NOTHING ELSE.
 Examples of valid outputs:
 - Payments
 - AI for Supplier Discovery
@@ -135,7 +131,7 @@ Examples of INVALID outputs (DO NOT USE):
 - New suggestion: Robotics
 - I think this company belongs in...
 
-IF there is no good match for the company and you don't want to suggest a new cagegory, return only: STOP
+IF there is no good match for the company or we are at a sufficiently high level of the tree, return only: STOP
 
 """
 
@@ -148,7 +144,6 @@ IF there is no good match for the company and you don't want to suggest a new ca
         temperature=0.2,
         max_tokens=30
     )
-
     choice = response.choices[0].message.content.strip()
     choice = clean_category_output(choice)
 
@@ -159,7 +154,7 @@ IF there is no good match for the company and you don't want to suggest a new ca
         retry_prompt = f"""
     Your last output "{choice}" was invalid.
 
-    Remember: ONLY return a single category name from the list, or a new suggestion, or STOP.
+    Remember: ONLY return a single category name from the list, or STOP.
     Do not add extra words, explanations, or formatting.
     Examples of valid outputs: Payments, Robotics, AI for Supplier Discovery.
     Output must be ≤ 5 words, one line only.
@@ -294,6 +289,9 @@ def get_llm_final_recommendation(trace, company_description, founder_info, compa
             Investment notes for this category: {final_notes}
             Final Status: {final_node['status']}
             """
+    else:
+        print("No final node found:")
+        print("Trace: ", trace)
     
     path_text = "\n\n".join(path_context)
     
@@ -511,7 +509,8 @@ def analyze_company(company_description, founder_description, company_info, inve
     decision_path = traverse_tree(root_node, company_description)
 
     if len(decision_path["path"]) < 4 and decision_path['final_status'] != 'excluded':
-        new_leaf = suggest_leaf(decision_path["trace"], company_description)
+        #new_leaf = suggest_leaf(decision_path["trace"], company_description)
+        new_leaf = "none"
         if new_leaf != "none":
             print("New subcategory suggested: ", new_leaf)
             add_leaf_to_tree(root_node, decision_path["path"], new_leaf)
@@ -538,7 +537,7 @@ def analyze_company(company_description, founder_description, company_info, inve
     # Tree write disabled for Railway deployment
     # with open(get_tree_path(), 'w') as f:
     #     json.dump(root_node["children"], f, indent=2)
-    print("Tree analysis complete (write to file disabled for deployment)")
+    #print("Tree analysis complete (write to file disabled for deployment)")
 
     return final_recommendation, trace
 

@@ -697,6 +697,35 @@ def process_profiles_aviato(max_profiles=10):
     logger.info("Successfully processed %d profiles", count)
     return count
 
+def find_priority(row, priority_dict_company, priority_dict_person):
+
+    # Exact match for person names (Name column)
+    if 'name' in row and pd.notna(row['name']) and row['name'].strip():
+        normalized_person_name = normalize_string(row['name'])
+        if normalized_person_name in priority_dict_person:
+            return priority_dict_person[normalized_person_name]
+
+    # Exact and fuzzy matching for company names
+    for col in ['company_name_1', 'company_name_2', 'company_name_3']:
+        if pd.notna(row[col]) and row[col].strip():
+            s = fix_company_name(row[col])
+            normalized_company_name = normalize_string(s)
+            # Exact match first
+            if normalized_company_name in priority_dict_company:
+                return priority_dict_company[normalized_company_name]
+
+    return None
+
+def check_if_repeat_founder(row):
+    columns_to_search = ['position_2', 'position_3', 'position_4', 'position_5']
+
+    for column in columns_to_search:
+        if column in row and pd.notna(row[column]):  # Ensure the column exists and is not NaN
+            if 'founder' in row[column].lower() or 'co-founder' in row[column].lower():
+                return True  # Return immediately when a match is found
+
+    return False  # Default return if no founder roles are found
+
 def add_monty_data():
     """
     Add Monty analysis data to profiles from founders table where founder = true and product/market is null.
@@ -705,7 +734,6 @@ def add_monty_data():
     from services.database import get_db_connection, update_profile_in_db
     from services.profile_analysis import extract_info_from_website, extract_info_from_description_only, is_technical_founder
     from services.ai_parsing import get_past_notable_company, get_past_notable_education, generate_verticals
-    from utils.profile_utils import find_priority, check_if_repeat_founder
     from datetime import datetime
     import re
     import json
@@ -1335,9 +1363,9 @@ if __name__ == "__main__":
             for search_config in data.get("search_filters", []):
                 aviato_search(search_config.get("filter", {}), search_config.get("source", "aviato_search"))
     else:
-        process_profiles_aviato(max_profiles=200)
-        add_monty_data()
-        add_ai_scoring()
+        #process_profiles_aviato(max_profiles=200)
+        #add_monty_data()
+        #add_ai_scoring()
         add_tree_analysis()
 
 

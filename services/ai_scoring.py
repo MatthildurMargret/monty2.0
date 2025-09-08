@@ -1,4 +1,3 @@
-from utils.profile_utils import construct_row_text
 import re
 import sys
 import os
@@ -10,6 +9,88 @@ load_dotenv()
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from services.openai_api import ask_monty
 from services.groq_api import get_groq_response
+
+def construct_row_text(row, clean_columns=False, json=False):
+    """
+    Constructs a structured text summary of a founder's profile for AI scoring.
+    Handles variations in column naming using the `clean_columns` flag.
+
+    Parameters:
+        row (dict): Dictionary containing founder data.
+        clean_columns (bool): If True, uses lowercase keys with underscores for consistency.
+
+    Returns:
+        str: Formatted text summary of the founder.
+    """
+
+    # Handle column name variations if `clean_columns` is enabled
+    if clean_columns:
+        mappings = {
+            "building_since": "Building Since",
+            "verticals": "Verticals",
+            "years_of_experience": "Years of experience",
+            "company_tags": "Company Tags",
+            "school_tags": "school_tags",
+            "technical": "technical",
+            "repeat_founder": "Repeat founder?",
+            "industry_expertise_score": "Industry expertise score",
+            "funding": "Funding"
+        }
+        # Normalize column names
+        row = {mappings.get(k, k): v for k, v in row.items()}
+
+    if json:
+        current_position = f"{row.get('position_1', 'N/A')} at {row.get('company_name', 'N/A')} - {row.get('description_1', 'N/A')}"
+        past_experiences = ""
+        all_exp = row.get('all_experiences')
+        if all_exp:
+            for exp in all_exp:
+                past_experiences += f"{exp['position']} at {exp['company_name']} - {exp['description']}"
+
+    # Extract relevant fields safely
+    else:
+        current_position = f"{row.get('position_1', 'N/A')} at {row.get('company_name_1', 'N/A')} - {row.get('description_1', 'N/A')}, {row.get('dates_1', 'N/A')}"
+
+        past_experiences = "; ".join([
+            f"{row.get(f'position_{i}', 'N/A')} at {row.get(f'company_name_{i}', 'N/A')} - {row.get(f'description_{i}', 'N/A')}, {row.get(f'dates_{i}', 'N/A')}"
+            for i in range(2, 6) if row.get(f'company_name_{i}')
+        ])
+
+    education = "; ".join([
+        f"{row.get(f'school_name_{i}', 'N/A')} - {row.get(f'degree_{i}', 'N/A')}"
+        for i in range(1, 4) if row.get(f'school_name_{i}')
+    ])
+
+    funding_info = f"They have raised funding of: {row.get('funding', 'N/A')}" if row.get("funding") else ""
+
+    # Construct text
+    row_text = (
+        f"Current Position: {current_position}\n"
+        f"Past Experiences: {past_experiences}\n"
+        f"Education: {education}\n"
+        f"Building Since: {row.get('building_since', 'N/A')}, around {row.get('verticals', 'N/A')}\n"
+        f"Years of working experience: {row.get('years_of_experience', 'N/A')}\n"
+        f"{funding_info}\n"
+        f"Company Tags: {row.get('company_tags', 'N/A')}\n"
+        f"School Tags: {row.get('school_tags', 'N/A')}\n"
+        f"Technical Founder: {'Yes' if row.get('technical', False) else 'No'}\n"
+        f"Repeat Founder: {'Yes' if row.get('repeat_founder', False) else 'No'}\n"
+        f"Industry Expertise Score: {row.get('industry_expertise_score', 'N/A')}\n"
+    )
+    
+    # Add product description if available
+    if row.get('product'):
+        row_text += f"Product Description: {row.get('product')}\n"
+        
+    # Add market description if available
+    if row.get('market'):
+        row_text += f"Target Market: {row.get('market')}\n"
+        
+    # Add company tech score if available
+    if row.get('company_tech_score'):
+        row_text += f"Technical Uniqueness Score: {row.get('company_tech_score')}/10\n"
+
+    return row_text
 
 def parse_score(response):
     # Extracts the score and reasoning from the response

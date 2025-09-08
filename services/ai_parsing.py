@@ -1,4 +1,3 @@
-from utils.profile_utils import get_startup_name, construct_row_text
 
 import sys
 import os

@@ -687,6 +687,23 @@ def heavy_clean(url):
         return url
     return url.split("https://www.")[1]
 
+def is_linkedin_url(url):
+    """
+    Check if a URL is a LinkedIn profile URL.
+    
+    Args:
+        url (str): URL to check
+        
+    Returns:
+        bool: True if the URL is a LinkedIn profile URL, False otherwise
+    """
+    if not url or not isinstance(url, str):
+        return False
+        
+    # Check if the URL contains LinkedIn profile indicators
+    
+    return '/in/' in url and ('linkedin.com' in url.lower())
+
 def cleanup_search_list():
     """
     Clean up the search_list and stealth_search_list tables by removing entries that have already been processed.

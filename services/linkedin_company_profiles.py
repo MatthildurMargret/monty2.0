@@ -1,5 +1,4 @@
 from bs4 import BeautifulSoup
-from services.linkedin import get_html_with_playwright
 from playwright.sync_api import sync_playwright
 import re
 import time
@@ -148,7 +147,7 @@ def scrape_extra_company_info_playwright(experience_data, context=None):
         company_html = page.content()
         page.close()
     else:
-        company_html = get_html_with_playwright(company_link)
+        company_html = ""
     soup = BeautifulSoup(company_html, 'html.parser')
     details, website = extract_details(soup)
 
