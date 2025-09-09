@@ -15,7 +15,7 @@ def get_tree_path():
     return os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "taste_tree.json")
 
 # Configuration flag to enable/disable tree writes (disabled for Railway deployment)
-ENABLE_TREE_WRITES = False
+ENABLE_TREE_WRITES = True
 
 def can_write_tree():
     """Check if tree writes are enabled."""
@@ -290,8 +290,10 @@ def get_llm_final_recommendation(trace, company_description, founder_info, compa
             Final Status: {final_node['status']}
             """
     else:
-        print("No final node found:")
-        print("Trace: ", trace)
+        response = "RECOMMENDATION: PASS"
+        response += f"\nTHESIS: No specific thesis"
+        response += f"\nPATH: No path available"
+        return response, trace
     
     path_text = "\n\n".join(path_context)
     
@@ -323,7 +325,7 @@ Compare the company description to the context associated with the space and onl
 Important to remember: 
 In all cases, we are only interested in early stage startups with presence in the US, especially in SF Bay Area or California. 
 They have to be venture backable - not studios, agencies, consulting firms, etc. 
-They should be less than 3 years old - so starting in 2022 or later.
+They should be less than 3 years old - so starting in 2022 or later, and we're less interested if they've already raised over $5M. The earlier the better!
 
 Consider:
 1. The investment thesis and interest level, notes at each stage of the path. This is important - if the investment status at each stage is low and then the last node is neutral, it's clearly a space we're not interested in. If there's a lot of "High" along the path but the last node is "Neutral", that still signals strong alignment and maybe it's an interesting new space we haven't seen before.
@@ -355,14 +357,15 @@ JUSTIFICATION: [Maximum 4 sentences explaining your reasoning based on the path 
     return response, trace
 
 
-def parse_recommendation(recommendation_text):
-    """Parse the structured recommendation output into components.
-    
-    Returns:
-        dict: Contains 'recommendation' and 'justification' keys
-    """
-    lines = recommendation_text.strip().split('\n')
-    result = {'recommendation': 'Unknown', 'justification': 'No justification provided'}
+def parse_llm_response(response_text):
+    """Parse the LLM response to extract recommendation and justification."""
+    lines = response_text.strip().split('\n')
+    result = {
+        'recommendation': 'Unknown', 
+        'justification': 'No justification provided',
+        'thesis': 'No specific thesis',
+        'path': 'No path provided'
+    }
     
     for line in lines:
         line = line.strip()
@@ -529,7 +532,7 @@ def analyze_company(company_description, founder_description, company_info, inve
             new_leafs.append(new_leaf_dict)
 
     final_recommendation_raw, trace = get_llm_final_recommendation(decision_path["trace"], company_description, founder_description, company_info, investment_theses)
-    final_recommendation = parse_recommendation(final_recommendation_raw)
+    final_recommendation = parse_llm_response(final_recommendation_raw)
 
     # print("\nFinal recommendation:", final_recommendation['recommendation'])
     # rint("Justification:", final_recommendation['justification'])
@@ -578,10 +581,13 @@ def insert_thought_into_tree(thought):
         #    root_node['meta']['investment_status'] = suggested_status.capitalize()
         #    print(f"Set investment_status to '{suggested_status.capitalize()}' for root node")
         
-        # Save updated tree - DISABLED for Railway deployment
-        # with open(get_tree_path(), 'w') as f:
-        #     json.dump(root_node['children'], f, indent=2)  # Save back the actual tree
-        print("Thought insertion complete (write to file disabled for deployment)")
+        # Save updated tree
+        if can_write_tree():
+            with open(get_tree_path(), 'w') as f:
+                json.dump(root_node['children'], f, indent=2)  # Save back the actual tree
+            print("Thought insertion complete - tree updated")
+        else:
+            print("Thought insertion complete (write to file disabled for deployment)")
         return
     elif not best_node_path:
         print("Could not find a suitable node for this thought")
@@ -698,11 +704,15 @@ def insert_thought_into_tree(thought):
         #        dup_target_node['meta']['investment_status'] = suggested_status.capitalize()
         #        print(f"Set investment_status to '{suggested_status.capitalize()}' for {duplicate['full_path']}")
     
-    # Save the updated tree back to file - DISABLED for Railway deployment
-    # with open(get_tree_path(), 'w') as f:
-    #    json.dump(taste_tree, f, indent=2)
-    print("Portfolio company insertion complete (write to file disabled for deployment)")
+    # Save the updated tree back to file
+    if can_write_tree():
+        with open(get_tree_path(), 'w') as f:
+            json.dump(taste_tree, f, indent=2)
+        print(f"Thought insertion complete - updated {nodes_updated} nodes")
+    else:
+        print("Thought insertion complete (write to file disabled for deployment)")
     
+
 def find_best_node_for_thought(node, thought, path=None):
     if path is None:
         path = []
@@ -1534,7 +1544,7 @@ def find_similar_nodes(root_node, name):
 #with open(thoughts_file, 'r') as f:
 #    thoughts = f.readlines()
 #    # Only process the last 20 thoughts
-#    last_20_thoughts = thoughts[-20:] if len(thoughts) > 20 else thoughts
+#    last_20_thoughts = thoughts[-30:] if len(thoughts) > 30 else thoughts
 #    print(last_20_thoughts)
 #    for thought in last_20_thoughts:
 #        insert_thought_into_tree(thought)

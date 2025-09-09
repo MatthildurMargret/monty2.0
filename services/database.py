@@ -771,7 +771,13 @@ def cleanup_search_list():
                 # Clean the URL if it exists
                 if profile_url:
                     cleaned_url = clean_linkedin_url(profile_url)
-                    heavy_cleaned_url = cleaned_url.split("https://www.")[1]
+                    
+                    # Safely extract the heavy cleaned URL
+                    heavy_cleaned_url = None
+                    if cleaned_url and "https://www." in cleaned_url:
+                        parts = cleaned_url.split("https://www.")
+                        if len(parts) > 1:
+                            heavy_cleaned_url = parts[1]
                     
                     # Check if URL already processed
                     if (cleaned_url and cleaned_url in already_scraped_urls) or (profile_url and profile_url in already_scraped_urls) or (heavy_cleaned_url and heavy_cleaned_url in already_scraped_urls) or (heavy_cleaned_url and heavy_cleaned_url in already_scraped_heavy_cleaned):

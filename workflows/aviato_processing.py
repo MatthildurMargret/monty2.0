@@ -195,6 +195,9 @@ def map_aviato_to_schema(person: dict) -> dict:
     # Twitter handle if present
     mapped["twitter"] = person.get("URLs", {}).get("twitter")
 
+    # Aviato ID
+    mapped["aviato_id"] = person.get("id")
+    
     # LinkedIn metadata
     mapped["linkedinID"] = person.get("linkedinID")
     mapped["linkedinNumID"] = str(person.get("linkedinNumID", ""))
@@ -307,32 +310,60 @@ def enrich_company(company_id, profile_dict):
     else:
         profile_dict["description_1"] = None
         
-    profile_dict["fundingAmount"] = company.get("totalFunding")
-    profile_dict["fundingRoundCount"] = company.get("fundingRoundCount")
-    profile_dict["latestDealType"] = company.get("latestDealType")
-    profile_dict["latestDealAmount"] = company.get("latestDealAmount")
-    profile_dict["lastRoundValuation"] = company.get("lastRoundValuation")
+    profile_dict["fundingamount"] = company.get("totalFunding")
+    profile_dict["fundingroundcount"] = company.get("fundingRoundCount")
+    profile_dict["latestdealtype"] = company.get("latestDealType")
+    profile_dict["latestdealamount"] = company.get("latestDealAmount")
+    profile_dict["lastroundvaluation"] = company.get("lastRoundValuation")
 
-    profile_dict["embeddedNews"] = company.get("embeddedNews", [])
-    profile_dict["governmentAwards"] = company.get("governmentAwards", [])
-    profile_dict["patentCount"] = company.get("patentCount", 0)  # Should be a number, not array
+    profile_dict["embeddednews"] = company.get("embeddedNews", [])
+    profile_dict["governmentawards"] = company.get("governmentAwards", [])
+    profile_dict["patentcount"] = company.get("patentCount", 0)  # Should be a number, not array
 
     profile_dict["building_since"] = company.get("founded")
     profile_dict["headcount"] = company.get("headcount")
+    profile_dict["aviato_id"] = company.get("id")
 
     profile_dict["company_url"] = company.get("URLs", {}).get("linkedin")
     profile_dict["company_website"] = company.get("URLs", {}).get("website")
     
     return profile_dict
 
-import json
+def enrich_company_raw(company_website):
+    """
+    Enrich company data using website URL via Aviato API.
+    Returns the raw company data from the API.
+    """
+    response = requests.get(
+        "https://data.api.aviato.co/company/enrich?website=" + company_website,
+        headers={
+            "Authorization": "Bearer " + aviato_api
+        },
+    )
+    
+    # Check if response is successful
+    if response.status_code != 200:
+        logger.error("Company API error for website %s: Status %s | Snippet: %s", 
+                    company_website, response.status_code, response.text[:200])
+        return None
+    
+    # Check if response has content
+    if not response.text.strip():
+        logger.warning("Empty company response for website %s", company_website)
+        return None
+    
+    # Try to parse JSON
+    try:
+        company = response.json()
+        return company
+    except (ValueError, requests.exceptions.JSONDecodeError) as e:
+        logger.error("Company JSON decode error for website %s: %s | Snippet: %s", 
+                    company_website, e, response.text[:200])
+        return None
+
 
 import json
 
-import json
-from datetime import datetime
-
-import json
 from datetime import datetime
 
 def check_if_founder(row, check_json=True):
@@ -348,9 +379,6 @@ def check_if_founder(row, check_json=True):
         tuple: (is_founder: bool, index: int)
                index = 0 if no founder role found
     """
-    # Already explicitly flagged
-    if str(row.get("founder")).lower() in ["yes", "true"]:
-        return True, 0
 
     experiences = []
     if check_json:
@@ -1237,11 +1265,13 @@ def search_aviato_profiles(search_filters):
         logger.error("Profile search error: %s | %s", response.status_code, response.text[:200])
 
 
-def enrich_companies(company_ids, chunk_size=100):
+def enrich_companies(company_ids, chunk_size=100, max_retries=2):
     """
     Enrich companies in chunks of up to 100 IDs each.
     Returns a flat list of enriched company objects.
     """
+    import time
+    
     url = "https://data.api.aviato.co/company/bulk-enrich"
     headers = {
         "Authorization": f"Bearer {aviato_api}",
@@ -1254,12 +1284,31 @@ def enrich_companies(company_ids, chunk_size=100):
         chunk = company_ids[i:i+chunk_size]
         payload = {"lookups": [{"id": cid} for cid in chunk]}
         
-        response = requests.post(url, headers=headers, json=payload)
-        if response.status_code == 200:
-            data = response.json().get("companies", [])
-            enriched.extend(data)
-        else:
-            logger.warning("Error enriching chunk %d: %s | %s", i//chunk_size + 1, response.status_code, response.text[:200])
+        # Retry logic for 500 errors
+        for attempt in range(max_retries + 1):
+            try:
+                response = requests.post(url, headers=headers, json=payload, timeout=30)
+                if response.status_code == 200:
+                    data = response.json().get("companies", [])
+                    enriched.extend(data)
+                    break  # Success, exit retry loop
+                elif response.status_code == 500 and attempt < max_retries:
+                    logger.warning("500 error on chunk %d, attempt %d/%d. Retrying in 2 seconds...", 
+                                 i//chunk_size + 1, attempt + 1, max_retries + 1)
+                    time.sleep(2)  # Wait before retry
+                    continue
+                else:
+                    logger.warning("Error enriching chunk %d: %s | %s", 
+                                 i//chunk_size + 1, response.status_code, response.text[:200])
+                    break  # Don't retry for non-500 errors or after max retries
+            except requests.exceptions.RequestException as e:
+                logger.warning("Request exception on chunk %d, attempt %d: %s", 
+                             i//chunk_size + 1, attempt + 1, str(e))
+                if attempt < max_retries:
+                    time.sleep(2)
+                    continue
+                else:
+                    break
 
     return enriched
 
@@ -1297,20 +1346,79 @@ def find_founder(company_id):
     else:
         logger.error("Find founder error: %s | %s", response.status_code, response.text[:200])
 
-def aviato_search(search_filters, source="aviato_search"):
+def aviato_search_collect(search_filters, source="aviato_search"):
+    """
+    Collect founder data from Aviato search without inserting to database.
+    Returns list of founder dictionaries.
+    """
     data = search_aviato_companies(search_filters)
+    if not data or "items" not in data:
+        logger.warning("No company data returned for search: %s", source)
+        return []
+        
     ids = [item["id"] for item in data["items"]]
     logger.info("Found %d companies", len(ids))
     companies = enrich_companies(ids)
     relevant = filter_relevant(companies)
     logger.info("Found %d relevant companies", len(relevant))
     founder_data = []
+    
     for co in relevant:
         company_id = co["id"]
         company_name = co["name"]
         company_url = co.get("website", "")
 
         founder = find_founder(company_id)
+        if not founder or "founders" not in founder:
+            continue
+            
+        for f in founder.get("founders", []):
+            # Skip if no fullName
+            if not f.get('fullName'):
+                continue
+                
+            # Get LinkedIn URL safely
+            urls = f.get('URLs', {})
+            linkedin_url = urls.get('linkedin', '')
+            
+            # Skip if no LinkedIn URL
+            if not linkedin_url:
+                continue
+                
+            founder_data.append({
+                'name': f['fullName'],
+                'profile_url': linkedin_url,
+                'title': f.get('headline', ''),
+                'source': source,
+                'company_name': company_name,
+                'company_url': company_url
+            })
+    
+    logger.info("Collected %d founders from %s", len(founder_data), source)
+    return founder_data
+
+def aviato_search(search_filters, source="aviato_search"):
+    data = search_aviato_companies(search_filters)
+    if not data or "items" not in data:
+        logger.warning("No company data returned for search: %s", source)
+        return
+        
+    ids = [item["id"] for item in data["items"]]
+    logger.info("Found %d companies", len(ids))
+    companies = enrich_companies(ids)
+    relevant = filter_relevant(companies)
+    logger.info("Found %d relevant companies", len(relevant))
+    founder_data = []
+    
+    for co in relevant:
+        company_id = co["id"]
+        company_name = co["name"]
+        company_url = co.get("website", "")
+
+        founder = find_founder(company_id)
+        if not founder or "founders" not in founder:
+            continue
+            
         for f in founder.get("founders", []):
             # Skip if no fullName
             if not f.get('fullName'):
@@ -1336,9 +1444,13 @@ def aviato_search(search_filters, source="aviato_search"):
     # Create DataFrame and insert to database
     if founder_data:
         df = pd.DataFrame(founder_data)
+        # Remove duplicates within this batch based on profile_url
+        df = df.drop_duplicates(subset=['profile_url'], keep='first')
+        logger.info("After deduplication: %d unique founders", len(df))
+        
         success = insert_search_results(df, table_name="search_list")
         if success:
-            logger.info("Inserted %d founders to search_list", len(founder_data))
+            logger.info("Inserted %d founders to search_list", len(df))
         else:
             logger.error("Failed to insert founder data")
     else:
@@ -1358,12 +1470,34 @@ if __name__ == "__main__":
     setup_logging()
 
     if args.discover:
+        import json
+        all_founder_data = []
+        
         with open("config/aviato_search_industries.json", "r") as f:
             data = json.load(f)
             for search_config in data.get("search_filters", []):
-                aviato_search(search_config.get("filter", {}), search_config.get("source", "aviato_search"))
+                # Collect founder data instead of inserting immediately
+                founder_data = aviato_search_collect(search_config.get("filter", {}), search_config.get("source", "aviato_search"))
+                if founder_data:
+                    all_founder_data.extend(founder_data)
+        
+        # Global deduplication and insertion
+        if all_founder_data:
+            df = pd.DataFrame(all_founder_data)
+            # Remove duplicates across all searches based on profile_url
+            original_count = len(df)
+            df = df.drop_duplicates(subset=['profile_url'], keep='first')
+            logger.info("Global deduplication: %d total founders, %d unique founders", original_count, len(df))
+            
+            success = insert_search_results(df, table_name="search_list")
+            if success:
+                logger.info("Successfully inserted %d unique founders to search_list", len(df))
+            else:
+                logger.error("Failed to insert founder data")
+        else:
+            logger.info("No founder data collected from any search")
     else:
-        process_profiles_aviato(max_profiles=200)
+        process_profiles_aviato(max_profiles=500)
         add_monty_data()
         add_ai_scoring()
         add_tree_analysis()

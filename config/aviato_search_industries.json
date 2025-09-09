@@ -6,7 +6,34 @@
         "source": "Fintech & Financial Services Search",
         "filter": {
           "region": "California",
-          "industryList": ["FinTech", "Financial Services", "Security", "Insurance", "InsurTech", "Payments"]
+          "industryList": ["FinTech"]
+        }
+      },
+      {
+        "name": "financial services",
+        "description": "Financial technology, payments, insurance, and security companies",
+        "source": "Fintech & Financial Services Search",
+        "filter": {
+          "region": "California",
+          "industryList": ["Financial Services"]
+        }
+      },
+      {
+        "name": "payments",
+        "description": "Financial technology, payments, insurance, and security companies",
+        "source": "Fintech & Financial Services Search",
+        "filter": {
+          "region": "California",
+          "industryList": ["Security", "Payments"]
+        }
+      },
+      {
+        "name": "insurance",
+        "description": "Financial technology, payments, insurance, and security companies",
+        "source": "Fintech & Financial Services Search",
+        "filter": {
+          "region": "California",
+          "industryList": ["Insurance", "InsurTech"]
         }
       },
       {
@@ -16,7 +43,17 @@
         "filter": {
           "country": "United States",
           "region": "California",
-          "industryList": ["Beauty", "Fitness", "Health Information Technology", "Personal Health", "Wellness"]
+          "industryList": ["Beauty", "Fitness", "Personal Health", "Wellness"]
+        }
+      },
+      {
+        "name": "health tech",
+        "description": "health tech",
+        "source": "Health Tech Search",
+        "filter": {
+          "country": "United States",
+          "region": "California",
+          "industryList": ["Health Information Technology"]
         }
       },
       {
@@ -39,13 +76,43 @@
         }
       },
       {
-        "name": "commerce_retail",
-        "description": "E-commerce, retail, advertising, content, and consumer companies",
-        "source": "Commerce & Retail Search",
+        "name": "ecommerce_retail",
+        "description": "E-commerce, retail, and retail technology companies",
+        "source": "E-commerce & Retail Search",
         "filter": {
           "country": "United States",
           "region": "California",
-          "industryList": ["Advertising", "Content", "Content Marketing", "Consumer", "E-Commerce", "Fashion", "Product research", "Retail", "Retail Technology", "Sales"]
+          "industryList": ["E-Commerce", "Retail", "Retail Technology"]
+        }
+      },
+      {
+        "name": "advertising_marketing",
+        "description": "Advertising, content marketing, and sales companies",
+        "source": "Advertising & Marketing Search",
+        "filter": {
+          "country": "United States",
+          "region": "California",
+          "industryList": ["Advertising", "Content Marketing", "Sales"]
+        }
+      },
+      {
+        "name": "content_media",
+        "description": "Content creation and media companies",
+        "source": "Content & Media Search",
+        "filter": {
+          "country": "United States",
+          "region": "California",
+          "industryList": ["Content"]
+        }
+      },
+      {
+        "name": "consumer_fashion",
+        "description": "Consumer products, fashion, and product research companies",
+        "source": "Consumer & Fashion Search",
+        "filter": {
+          "country": "United States",
+          "region": "California",
+          "industryList": ["Consumer", "Fashion", "Product research"]
         }
       },
       {
