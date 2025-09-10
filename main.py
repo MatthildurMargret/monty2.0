@@ -95,7 +95,7 @@ class MontyApp:
                 await asyncio.sleep(1)
                 
         except Exception as e:
-            logger.error(f"Error in Slack bot: {e}")
+            logger.error(f"Error in Slack bot: {e}\n{traceback.format_exc()}")
         finally:
             if self.slack_bot:
                 await self.slack_bot.stop()
