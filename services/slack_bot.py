@@ -39,6 +39,8 @@ class MontySlackBot:
         
         # Conversation context storage
         self.conversations = {}  # channel_id -> list of messages
+        self.user_threads = {}  # user_id -> thread_ts (to maintain threads per user)
+        self.processed_messages = set()  # Track processed message timestamps to avoid duplicates
         self.max_context_messages = int(os.getenv("MAX_CONTEXT_MESSAGES", "10"))
         self.max_context_tokens = int(os.getenv("MAX_CONTEXT_TOKENS", "8000"))
         
@@ -80,6 +82,7 @@ class MontySlackBot:
                 event["type"] == "message" 
                 and event.get("channel_type") == "im"
                 and "bot_id" not in event
+                and event.get("subtype") != "bot_message"  # Avoid processing bot's own messages
             ):
                 await self.handle_message(event)
 
@@ -139,12 +142,42 @@ class MontySlackBot:
             channel = event["channel"]
             text = event.get("text", "")
             user = event["user"]
+            message_ts = event.get("ts")
+            thread_ts = event.get("thread_ts")  # Check if message is already in a thread
+            
+            # Prevent duplicate processing of the same message
+            # Create unique key from channel, user, and timestamp
+            message_key = f"{channel}:{user}:{message_ts}"
+            if message_key in self.processed_messages:
+                logger.debug(f"Skipping duplicate message: {message_key}")
+                return
+            
+            self.processed_messages.add(message_key)
+            
+            # Clean up old processed messages (keep last 1000 to prevent memory leak)
+            if len(self.processed_messages) > 1000:
+                # Remove oldest 200 entries
+                old_messages = list(self.processed_messages)[:200]
+                for old_msg in old_messages:
+                    self.processed_messages.discard(old_msg)
             
             # Clean up the text (remove @mentions)
             clean_text = text.replace(f"<@{await self._get_bot_user_id()}>", "").strip()
             
-            # Get conversation context
-            context_history = self._get_conversation_context(channel)
+            # Get or create thread for this user
+            user_thread_key = f"{channel}:{user}"
+            
+            # If this is a new conversation (not in a thread), create/get the user's thread
+            if not thread_ts:
+                # Check if we have an existing thread for this user in this channel
+                if user_thread_key in self.user_threads:
+                    thread_ts = self.user_threads[user_thread_key]
+                else:
+                    # This will be set after we send our first reply
+                    thread_ts = None
+            
+            # Get conversation context (now per user thread)
+            context_history = self._get_conversation_context(user_thread_key)
             
             # Build full context for the agent
             if context_history:
@@ -160,24 +193,32 @@ class MontySlackBot:
                     context={"user_id": user, "channel": channel, "has_context": bool(context_history)}
                 )
             
-            # Send the result back to Slack
+            # Send the result back to Slack in the thread
             response_text = result.final_output
-            await self.client.chat_postMessage(
+            
+            # If no existing thread, use the original message timestamp to create one
+            if not thread_ts:
+                thread_ts = event.get("ts")  # Use original message as thread root
+                self.user_threads[user_thread_key] = thread_ts
+            
+            response = await self.client.chat_postMessage(
                 channel=channel,
                 text=response_text,
+                thread_ts=thread_ts,  # This creates/continues the thread
                 blocks=self._format_response_blocks(response_text) if len(response_text) > 500 else None
             )
             
-            # Add to conversation history
-            self._add_to_conversation(channel, clean_text, response_text)
+            # Add to conversation history (using user thread key)
+            self._add_to_conversation(user_thread_key, clean_text, response_text)
             
-            logger.info(f"Processed message in channel {channel}. Context size: {len(self.conversations.get(channel, []))} messages")
+            logger.info(f"Processed message from {user} in thread. Context size: {len(self.conversations.get(user_thread_key, []))} messages")
             
         except Exception as e:
             logger.error(f"Error handling message: {e}")
             await self.client.chat_postMessage(
                 channel=event["channel"],
-                text=f"Sorry, I encountered an error: {str(e)}"
+                text=f"Sorry, I encountered an error: {str(e)}",
+                thread_ts=event.get("thread_ts")  # Reply in thread if the original was in a thread
             )
     
     async def _get_bot_user_id(self):
