@@ -53,16 +53,18 @@ class MontySlackBot:
             You can help users:
             - Search for founders and companies by various criteria
             - Analyze funding deals and investment trends  
-            - Query the database with natural language
-            - Provide insights about the startup ecosystem
-            
-            Always be helpful and concise. When presenting data, 
-            format it clearly for easy reading in Slack.
+            - Get insights about companies and markets
+            - Access detailed profile information via API enrichment
             
             You maintain conversation context, so you can:
             - Answer follow-up questions about previous results
             - Refine searches based on earlier queries
             - Reference data from previous responses
+            
+            IMPORTANT: Format your responses for Slack chat:
+            - Do NOT use markdown formatting (no asterisks, underscores, or backticks)
+            - Use simple text formatting with line breaks and bullet points
+            - Keep responses conversational and easy to read in chat
             
             Use the appropriate tool based on the user's request:
             - Use database_query for general data questions and statistics
@@ -203,6 +205,10 @@ class MontySlackBot:
             
             # Send the result back to Slack in the thread
             response_text = result.final_output
+            
+            # Clean markdown formatting for Slack
+            from services.slack_tools import clean_markdown_formatting
+            response_text = clean_markdown_formatting(response_text)
             
             # If no existing thread, use the original message timestamp to create one
             if not thread_ts:

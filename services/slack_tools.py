@@ -10,19 +10,40 @@ import logging
 logger = logging.getLogger("slack_tools")
 
 def clean_markdown_formatting(text: str) -> str:
-    """Remove markdown formatting (bold/italic) from text while preserving content asterisks.
+    """Remove markdown formatting from text for Slack chat display.
     
     Args:
         text: Text that may contain markdown formatting
         
     Returns:
-        Text with markdown formatting removed
+        Text with markdown formatting removed and Slack-friendly formatting
     """
     import re
+    
     # Remove **bold** formatting
     text = re.sub(r'\*\*(.*?)\*\*', r'\1', text)
-    # Remove *italic* formatting
+    
+    # Remove *italic* formatting (but preserve single asterisks that aren't formatting)
     text = re.sub(r'(?<!\*)\*(?!\*)([^*]+)\*(?!\*)', r'\1', text)
+    
+    # Remove `code` formatting
+    text = re.sub(r'`([^`]+)`', r'\1', text)
+    
+    # Remove ```code blocks``` formatting
+    text = re.sub(r'```[\s\S]*?```', lambda m: m.group(0).replace('```', ''), text)
+    
+    # Remove __underline__ formatting
+    text = re.sub(r'__(.*?)__', r'\1', text)
+    
+    # Remove _italic_ formatting
+    text = re.sub(r'(?<!_)_(?!_)([^_]+)_(?!_)', r'\1', text)
+    
+    # Clean up markdown headers (# ## ###)
+    text = re.sub(r'^#{1,6}\s*', '', text, flags=re.MULTILINE)
+    
+    # Clean up markdown links [text](url) -> text
+    text = re.sub(r'\[([^\]]+)\]\([^\)]+\)', r'\1', text)
+    
     return text
 
 @function_tool
@@ -126,13 +147,16 @@ async def database_query(query: str, user_id: str = "slack_user") -> str:
         
         # Use LLM to interpret and format the results
         interpretation_prompt = f"""
-        Interpret these database results for a user query: "{query}"
-        
-        Results (showing {max_rows_for_llm} of {len(results)} total rows):
-        {df_truncated.to_string(max_rows=25)}
-        
-        Provide a clear, conversational summary. If showing a subset of results, mention the total count and highlight key patterns or interesting findings.
-        """
+            The user asked: "{query}"
+
+            Here are the exact database results (don't alter these):
+            {df_truncated.to_string(index=False)}
+
+            Task:
+            1. Present the results clearly in bullet points or a table.
+            2. Then, provide a **short summary** at the end.
+            3. Do NOT change or re-write the raw values (titles, names, funding, etc). 
+            """
         
         # Limit the data size sent to LLM
         results_text = df_truncated.to_string(max_rows=25)
