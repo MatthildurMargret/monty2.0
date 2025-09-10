@@ -71,21 +71,21 @@ class MontySlackBot:
             tools=MONTY_TOOLS
         )
     
-    async def process_message(self, req: SocketModeRequest):
+    async def process_message(self, client, req: SocketModeRequest):
         """Process incoming Slack messages"""
         if req.type == "events_api":
             event = req.payload["event"]
-            
+
             if event["type"] == "app_mention" or (
                 event["type"] == "message" 
                 and event.get("channel_type") == "im"
                 and "bot_id" not in event
             ):
                 await self.handle_message(event)
-                
+
         # Acknowledge the request
         response = SocketModeResponse(envelope_id=req.envelope_id)
-        await self.socket_client.send_socket_mode_response(response)
+        await client.send_socket_mode_response(response)
     
     def _estimate_tokens(self, text: str) -> int:
         """Rough token estimation (1 token ≈ 4 characters)"""
