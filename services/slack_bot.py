@@ -1,7 +1,7 @@
 import asyncio
 import os
 import logging
-from slack_sdk.socket_mode.async_client import AsyncSocketModeClient
+from slack_sdk.socket_mode.async_client import AsyncBaseSocketModeClient
 from slack_sdk.web.async_client import AsyncWebClient
 from slack_sdk.socket_mode.request import SocketModeRequest
 from slack_sdk.socket_mode.response import SocketModeResponse
@@ -20,7 +20,7 @@ logger = logging.getLogger("slack_bot")
 class MontySlackBot:
     def __init__(self):
         self.client = AsyncWebClient(token=os.getenv("SLACK_BOT_TOKEN"))
-        self.socket_client = AsyncSocketModeClient(
+        self.socket_client = AsyncBaseSocketModeClient(
             app_token=os.getenv("SLACK_APP_TOKEN"),
             web_client=self.client
         )
