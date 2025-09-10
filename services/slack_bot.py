@@ -17,6 +17,18 @@ load_dotenv()
 
 logger = logging.getLogger("slack_bot")
 
+import aiohttp.client_ws
+
+# Patch aiohttp ping to always encode strings
+orig_ping = aiohttp.client_ws.ClientWebSocketResponse.ping
+async def fixed_ping(self, message=b""):
+    if isinstance(message, str):
+        message = message.encode("utf-8")
+    return await orig_ping(self, message)
+
+aiohttp.client_ws.ClientWebSocketResponse.ping = fixed_ping
+
+
 class MontySlackBot:
     def __init__(self):
         self.client = AsyncWebClient(token=os.getenv("SLACK_BOT_TOKEN"))
