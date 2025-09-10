@@ -47,9 +47,9 @@ class MontySlackBot:
         # Initialize the OpenAI Agent with custom tools
         self.agent = Agent(
             name="Monty",
-            instructions="""You are Monty, an intelligent assistant for startup and founder data analysis. 
+            instructions="""You are Monty, the most intelligent assistant at Montage Ventures. 
             
-            You have access to a database of founders, startups, recent news, and funding deals. 
+            You have access to Montage's databases of founders, startups, recent news, and funding deals. 
             You can help users:
             - Search for founders and companies by various criteria
             - Analyze funding deals and investment trends  
@@ -65,10 +65,7 @@ class MontySlackBot:
             - Reference data from previous responses
             
             Use the appropriate tool based on the user's request:
-            - Use profile_search for finding specific people or companies
-            - Use deal_analysis for funding and investment questions
             - Use database_query for general data questions and statistics
-            - Use company_insights for strategic analysis and trends
             """,
             tools=MONTY_TOOLS
         )
@@ -186,12 +183,23 @@ class MontySlackBot:
                 full_context = clean_text
             
             # Use OpenAI Agent to process the message with context
+            logger.info(f"Processing message from {user}: '{clean_text[:100]}{'...' if len(clean_text) > 100 else ''}'")
+            
             with trace(f"Slack message from {user} (context: {len(context_history)} chars)"):
                 result = await Runner.run(
                     self.agent,
                     full_context,
                     context={"user_id": user, "channel": channel, "has_context": bool(context_history)}
                 )
+            
+            # Log any tool calls that were made
+            if hasattr(result, 'messages') and result.messages:
+                for message in result.messages:
+                    if hasattr(message, 'tool_calls') and message.tool_calls:
+                        for tool_call in message.tool_calls:
+                            tool_name = tool_call.function.name if hasattr(tool_call, 'function') else 'unknown'
+                            logger.info(f"Tool called: {tool_name}")
+                            
             
             # Send the result back to Slack in the thread
             response_text = result.final_output
@@ -211,7 +219,7 @@ class MontySlackBot:
             # Add to conversation history (using user thread key)
             self._add_to_conversation(user_thread_key, clean_text, response_text)
             
-            logger.info(f"Processed message from {user} in thread. Context size: {len(self.conversations.get(user_thread_key, []))} messages")
+            logger.info(f"✅ Response sent to {user} | Thread messages: {len(self.conversations.get(user_thread_key, []))}")
             
         except Exception as e:
             logger.error(f"Error handling message: {e}")

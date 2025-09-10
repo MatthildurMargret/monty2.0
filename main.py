@@ -35,14 +35,16 @@ class MontyApp:
         log_level = os.getenv("LOG_LEVEL", "INFO")
         logging.basicConfig(
             level=getattr(logging, log_level.upper()),
-            format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
-            datefmt="%Y-%m-%d %H:%M:%S"
+            format='%(asctime)s | %(levelname)s | %(name)s | %(message)s',
+            datefmt='%Y-%m-%d %H:%M:%S'
         )
         
-        # Reduce noise from third-party libraries
+        # Reduce noise from HTTP requests and external libraries
+        logging.getLogger("httpx").setLevel(logging.WARNING)
+        logging.getLogger("openai").setLevel(logging.WARNING)
         logging.getLogger("urllib3").setLevel(logging.WARNING)
         logging.getLogger("requests").setLevel(logging.WARNING)
-        logging.getLogger("slack_sdk").setLevel(logging.INFO)
+        logging.getLogger("slack_sdk").setLevel(logging.WARNING)
     
     def run_aviato_processing(self):
         """Run the sync aviato processing pipeline"""
