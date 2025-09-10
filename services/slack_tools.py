@@ -37,6 +37,7 @@ async def database_query(query: str, user_id: str = "slack_user") -> str:
         Formatted query results with interpretation
     """
     try:
+        logger.info(f"Tool: database_query | Query: '{query}'")
         # Use LLM to convert natural language to SQL
         sql_prompt = f"""
         You are a SQL expert. Convert this natural language query to a PostgreSQL query for a founder database.
@@ -65,8 +66,8 @@ async def database_query(query: str, user_id: str = "slack_user") -> str:
         - all_experiences: Jsonb field containing ALL work experiences and background
         
         investment_theses table:
-        - thesis_title: Title/name of the investment thesis
-        - category: Category or sector of the investment thesis
+        - thesis_title: Title/name of the investment thesis (For example, Fighting Financial Fraud)
+        - category: Category or sector of the investment thesis (fintech, healthcare, or commerce)
         - thesis_text: Full text description of the investment thesis
         - keywords: Comma-separated keywords related to the thesis
         
@@ -74,6 +75,7 @@ async def database_query(query: str, user_id: str = "slack_user") -> str:
         - "Show me founders from San Francisco" → "SELECT * FROM founders WHERE location ILIKE '%San Francisco%' LIMIT 50;"
         - "How many founders are there?" → "SELECT COUNT(*) FROM founders;"
         - "Find AI founders" → "SELECT * FROM founders WHERE verticals ILIKE '%AI%' ORDER BY past_success_indication_score DESC LIMIT 50;"
+        - "What are some problems highlighted in our cross-border payments thesis?" → "SELECT * FROM investment_theses WHERE thesis_title LIKE '%Cross-border payments%';"
         
         Query: {query}
         
@@ -93,7 +95,7 @@ async def database_query(query: str, user_id: str = "slack_user") -> str:
         sql_query = sql_query.strip()
         
         # Debug: Show the generated SQL query
-        logger.info(f"Generated SQL Query: {sql_query}")
+        logger.info(f"Generated SQL: {sql_query}")
         
         # Ensure LIMIT is present in SELECT queries to prevent large result sets
         if sql_query.upper().startswith('SELECT') and 'COUNT(' not in sql_query.upper() and 'LIMIT' not in sql_query.upper():
@@ -102,7 +104,7 @@ async def database_query(query: str, user_id: str = "slack_user") -> str:
         # Execute the query safely
         conn = get_db_connection()
         if not conn:
-            return "❌ Database connection failed"
+            return "Database connection failed"
             
         cursor = conn.cursor()
         cursor.execute(sql_query)
@@ -147,293 +149,39 @@ async def database_query(query: str, user_id: str = "slack_user") -> str:
         return f"❌ Error processing query: {str(e)}"
 
 @function_tool
-async def profile_search(query: str, user_id: str = "slack_user") -> str:
-    """Search for founder profiles and companies based on criteria.
-    
-    Args:
-        query: Natural language search query for profiles (location, industry, role, company type, etc.)
-        user_id: ID of the user making the search
-        
-    Returns:
-        Formatted search results with profile information
-    """
-    try:
-        conn = get_db_connection()
-        if not conn:
-            return "❌ Database connection failed"
-        
-        # Extract search criteria from natural language
-        search_prompt = f"""
-        Extract search criteria from this query: "{query}"
-        
-        Return a JSON object with these possible fields (only include if mentioned):
-        - "company": company name or type
-        - "location": city, state, or country  
-        - "role": job title or role
-        - "funding": funding stage or amount
-        - "industry": industry or sector
-        
-        Example: {{"company": "fintech", "location": "San Francisco", "role": "CEO"}}
-        """
-        
-        criteria_json = ask_monty(search_prompt, "", max_tokens=150)
-        
-        # Debug: Show the criteria extraction
-        logger.info(f"Profile Search criteria extraction: {criteria_json}")
-        
-        criteria = json.loads(criteria_json)
-        
-        # Build SQL query based on criteria
-        where_conditions = []
-        params = []
-        
-        if criteria.get("company"):
-            where_conditions.append("company_name ILIKE %s")
-            params.append(f"%{criteria['company']}%")
-            
-        if criteria.get("location"):
-            where_conditions.append("location ILIKE %s")
-            params.append(f"%{criteria['location']}%")
-            
-        if criteria.get("role"):
-            where_conditions.append("headline ILIKE %s")
-            params.append(f"%{criteria['role']}%")
-        
-        where_clause = " AND ".join(where_conditions) if where_conditions else "1=1"
-        
-        sql_query = f"""
-        SELECT name, company_name, location, funding
-        FROM founders 
-        WHERE {where_clause}
-        ORDER BY funding DESC NULLS LAST
-        LIMIT 10
-        """
-        
-        cursor = conn.cursor()
-        cursor.execute(sql_query, params)
-        results = cursor.fetchall()
-        
-        # Debug: Show query results
-        logger.info(f"Profile Search SQL: {sql_query}")
-        logger.info(f"Profile Search returned {len(results)} rows")
-        if results:
-            logger.info(f"Sample results (first 3 rows): {results[:3]}")
-        
-        if not results:
-            return f"🔍 No profiles found matching: {query}"
-        
-        # Format results
-        response = f"🚀 **Found {len(results)} profiles matching '{query}':**\n\n"
-        
-        for i, (name, company, location, funding) in enumerate(results[:5], 1):
-            funding_info = f" | ${funding:,.0f}" if funding else ""
-            
-            response += f"{i}. **{name}**\n"
-            response += f"   Company: {company or 'Unknown'}\n"
-            response += f"   📍 {location}{funding_info}\n\n"
-        
-        conn.close()
-        return response
-        
-    except Exception as e:
-        logger.error(f"Profile search tool error: {e}")
-        return f"❌ Error searching profiles: {str(e)}"
-
-@function_tool
-async def deal_analysis(query: str, user_id: str = "slack_user") -> str:
-    """Analyze funding deals, investment rounds, and financial data.
-    
-    Args:
-        query: Natural language query about funding deals, investment trends, or financial analysis
-        user_id: ID of the user making the query
-        
-    Returns:
-        Formatted analysis of funding deals and investment data
-    """
-    try:
-        conn = get_db_connection()
-        if not conn:
-            return "❌ Database connection failed"
-        
-        # Analyze funding data
-        sql_query = """
-        SELECT 
-            'Funding' as deal_type,
-            AVG(funding) as avg_funding,
-            COUNT(*) as deal_count
-        FROM founders 
-        WHERE funding IS NOT NULL 
-        GROUP BY 'Funding'
-        ORDER BY avg_funding DESC
-        """
-        
-        cursor = conn.cursor()
-        cursor.execute(sql_query)
-        results = cursor.fetchall()
-        
-        # Debug: Show query results
-        logger.info(f"Deal Analysis SQL: {sql_query}")
-        logger.info(f"Deal Analysis returned {len(results)} rows")
-        if results:
-            logger.info(f"Sample results: {results[:3]}")
-        
-        if not results:
-            return "📈 No funding data available"
-        
-        response = "💰 **Funding Analysis:**\n\n"
-        
-        for deal_type, avg_funding, count in results:
-            response += f"**{deal_type}:**\n"
-            response += f"  • Average: ${avg_funding:,.0f}\n"
-            response += f"  • Count: {count} deals\n\n"
-        
-        # Add recent high-value deals
-        recent_deals_query = """
-        SELECT name, company_name, funding
-        FROM founders 
-        WHERE funding > 1000000
-        ORDER BY funding DESC
-        LIMIT 5
-        """
-        
-        cursor.execute(recent_deals_query)
-        recent_results = cursor.fetchall()
-        
-        if recent_results:
-            response += "🔥 **Top Funded Companies:**\n"
-            for name, company, amount in recent_results:
-                response += f"• **{name}** ({company}): ${amount:,.0f}\n"
-        
-        conn.close()
-        return response
-        
-    except Exception as e:
-        logger.error(f"Deal analysis tool error: {e}")
-        return f"❌ Error analyzing deals: {str(e)}"
-
-@function_tool
-async def company_insights(query: str, user_id: str = "slack_user") -> str:
-    """Get insights about companies, market trends, and industry analysis.
-    
-    Args:
-        query: Natural language query about companies, market trends, or strategic analysis
-        user_id: ID of the user making the query
-        
-    Returns:
-        Strategic insights and market analysis with actionable recommendations
-    """
-    try:
-        # Enhanced insights using database query with strategic context
-        enhanced_query = f"Provide strategic insights and analysis about: {query}"
-        
-        # Use the same logic as DatabaseQueryTool but with strategic focus
-        sql_prompt = f"""
-        You are a SQL expert. Convert this strategic analysis query to a PostgreSQL query for a founder/startup database.
-        Focus on trends, patterns, and insights rather than just raw data.
-        
-        Available tables and key columns:
-        - founders: profile_url, name, company_name, founder, repeat_founder, technical, verticals, location, funding, tree_path, tree_result, tree_justification, past_success_indication_score, startup_expertise_score, allexperiences
-        - investment_theses: thesis_title, category, thesis_text, keywords
-        
-        Query: {enhanced_query}
-        
-        Return only the SQL query, no explanation:
-        """
-        
-        sql_query = ask_monty(sql_prompt, "", max_tokens=200)
-        
-        # Clean up SQL query - remove markdown code blocks if present
-        sql_query = sql_query.strip()
-        if sql_query.startswith("```sql"):
-            sql_query = sql_query[6:]
-        if sql_query.startswith("```"):
-            sql_query = sql_query[3:]
-        if sql_query.endswith("```"):
-            sql_query = sql_query[:-3]
-        sql_query = sql_query.strip()
-        
-        # Debug: Show the generated SQL query
-        logger.info(f"Company Insights SQL Query: {sql_query}")
-        
-        conn = get_db_connection()
-        if not conn:
-            return "❌ Database connection failed"
-            
-        cursor = conn.cursor()
-        cursor.execute(sql_query)
-        results = cursor.fetchall()
-        column_names = [desc[0] for desc in cursor.description]
-        
-        if not results:
-            return "No data available for this analysis."
-        
-        df = pd.DataFrame(results, columns=column_names)
-        
-        # Debug: Show truncated results
-        logger.info(f"Company Insights returned {len(results)} rows")
-        logger.info(f"Sample results (first 3 rows): {df.head(3).to_dict('records')}")
-        
-        # Strategic interpretation focused on insights and trends
-        interpretation_prompt = f"""
-        Provide strategic insights and market analysis for: "{query}"
-        
-        Data:
-        {df.to_string(max_rows=15)}
-        
-        Focus on:
-        - Market trends and patterns
-        - Strategic opportunities
-        - Key insights for decision making
-        - Actionable recommendations
-        
-        Format as a strategic brief with clear insights and recommendations.
-        """
-        
-        interpretation = ask_monty(interpretation_prompt, df.to_string(max_rows=15), max_tokens=400)
-        
-        conn.close()
-        return f"🎯 **Strategic Insights:**\n{interpretation}"
-        
-    except Exception as e:
-        logger.error(f"Company insights tool error: {e}")
-        return f"❌ Error generating insights: {str(e)}"
-
-@function_tool
 async def notion_pipeline(query: str, user_id: str = "slack_user") -> str:
     """Get insights about companies we've met that are in Notion Pipeline database.
     
     Args:
-        query: Natural language query about companies, past interactions, or strategic analysis
+        query: Natural language query about pipeline companies
         user_id: ID of the user making the query
         
     Returns:
-        Information from Notion Pipeline database
+        Pipeline company insights
     """
-    from services.notion import import_pipeline
-    try:
-        ID = "15e30f29-5556-4fe1-89f6-76d477a79bf8"
-        pipeline = import_pipeline(ID)
 
-        # Debug: Show truncated results
-        logger.info(f"Query returned {len(pipeline)} rows")
-        
-        # Use LLM to interpret and format the results
-        interpretation_prompt = f"""
-        Interpret these database results for a user query: "{query}"
-        
-        Results:
-        {pipeline.to_string(max_rows=100)}
-        
-        Provide a clear, conversational summary. If there are many results, highlight the most interesting findings.
-        """
-        
-        interpretation = ask_monty(interpretation_prompt, pipeline.to_string(max_rows=100), max_tokens=300)
-        
-        return clean_markdown_formatting(interpretation)
-        
-    except Exception as e:
-        logger.error(f"Company insights tool error: {e}")
-        return f"❌ Error generating insights: {str(e)}"
+    logger.info(f"Tool: notion_pipeline | Query: '{query}'")
+    from services.notion import import_pipeline
+    
+    ID = "15e30f29-5556-4fe1-89f6-76d477a79bf8"
+    pipeline = import_pipeline(ID)
+
+    # Debug: Show truncated results
+    logger.info(f"Query returned {len(pipeline)} rows")
+    
+    # Use LLM to interpret and format the results
+    interpretation_prompt = f"""
+    Interpret these Notion Pipeline database results for a user query: "{query}"
+    
+    Results:
+    {pipeline.to_string(max_rows=100)}
+    
+    Provide a clear, conversational summary. If there are many results, highlight the most interesting findings.
+    """
+    
+    interpretation = ask_monty(interpretation_prompt, pipeline.to_string(max_rows=100), max_tokens=300)
+    
+    return clean_markdown_formatting(interpretation)
 
 @function_tool
 async def api_profile_info(query: str, user_id: str = "slack_user") -> str:
@@ -441,16 +189,17 @@ async def api_profile_info(query: str, user_id: str = "slack_user") -> str:
     Get detailed profile information using the Aviato API enrichment service.
     
     Args:
-        query: Natural language query containing LinkedIn ID or URL (e.g., "Tell me about matthildur", "What do you know about https://www.linkedin.com/in/matthildur-arnadottir/")
-        user_id: User ID for logging purposes
+        query: Natural language query specifying the person to look up
+        user_id: ID of the user making the query
         
     Returns:
-        Formatted profile information from Aviato API
+        Detailed profile information from Aviato API
     """
-    from workflows.aviato_processing import enrich_profile
-    import re
-    
     try:
+        logger.info(f"Tool: api_profile_info | Query: '{query}'")
+        from workflows.aviato_processing import enrich_profile
+        import re
+        
         # Use LLM to extract LinkedIn identifier from natural language
         extraction_prompt = f"""
         Extract LinkedIn information from this query: "{query}"
@@ -545,16 +294,17 @@ async def api_company_info(query: str, user_id: str = "slack_user") -> str:
     Get detailed company information using the Aviato API enrichment service.
     
     Args:
-        query: Natural language query containing company website or name (e.g., "Tell me about stripe.com", "What do you know about https://openai.com")
-        user_id: User ID for logging purposes
+        query: Natural language query specifying the company to look up
+        user_id: ID of the user making the query
         
     Returns:
-        Formatted company information from Aviato API
+        Detailed company information from Aviato API
     """
-    from workflows.aviato_processing import enrich_company_raw
-    import re
-    
     try:
+        logger.info(f"Tool: api_company_info | Query: '{query}'")
+        from workflows.aviato_processing import enrich_company_raw
+        import re
+        
         # Use LLM to extract company website from natural language
         extraction_prompt = f"""
         Extract company website information from this query: "{query}"
