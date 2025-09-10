@@ -184,11 +184,55 @@ async def test_api_company_info_tool():
         # Small delay between tests
         await asyncio.sleep(1)
 
+async def test_get_sector_info_tool():
+    """Test get_sector_info function directly"""
+    logger.info("Testing get_sector_info...")
+    
+    # Get the get_sector_info tool
+    sector_info_tool = None
+    for tool in MONTY_TOOLS:
+        if tool.name == "get_sector_info":
+            sector_info_tool = tool
+            break
+    
+    if not sector_info_tool:
+        print("ERROR: get_sector_info tool not found")
+        return
+    
+    test_queries = [
+        "Tell me about AI infrastructure",
+        "What's Montage's view on payments?",
+        "Show me information about healthcare AI",
+        "What do we know about fintech?",
+        "Give me details on robotics investments"
+    ]
+    
+    for i, query in enumerate(test_queries, 1):
+        print(f"\nSector Info Test {i}: {query}")
+        print("-" * 30)
+        
+        try:
+            # Use the tool's on_invoke_tool method with proper arguments
+            import json
+            args = json.dumps({"query": query, "user_id": "test_user"})
+            result = await sector_info_tool.on_invoke_tool(None, args)
+            print("Result:")
+            print(result)
+            print("-" * 30)
+            
+        except Exception as e:
+            print(f"ERROR: {e}")
+            logger.error(f"Sector info test failed: {e}")
+        
+        # Small delay between tests
+        await asyncio.sleep(1)
+
 
 async def main():
     """Run direct tool tests"""
     print("🧪 Direct Tool Testing")
-    await test_api_company_info_tool()
+    await test_get_sector_info_tool()
+    #await test_api_company_info_tool()
     #await test_api_profile_info_tool()
     #await test_pipeline_tool()
     #await test_database_tool()

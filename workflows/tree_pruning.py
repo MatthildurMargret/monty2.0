@@ -675,7 +675,7 @@ def print_cleanup_results(cleanup_results):
 # -------------------
 # Recent deals integration
 # -------------------
-def update_tree_with_recent_deals(tree_json, deals_csv_path="deal_data/all_deals.csv", days_back=7):
+def update_tree_with_recent_deals(tree_json, deals_csv_path="data/deal_data/all_deals.csv", days_back=7):
     """
     Update the tree's recent_news metadata fields with deals from the past N days.
     Uses LLM to find the most appropriate node for each deal, similar to thought insertion.
@@ -713,6 +713,7 @@ def update_tree_with_recent_deals(tree_json, deals_csv_path="deal_data/all_deals
     
     # Filter for recent deals
     cutoff_date = datetime.now() - timedelta(days=days_back)
+    print("CUt off date: ", cutoff_date)
     recent_deals = deals_df[deals_df['Date'] >= cutoff_date].copy()
     
     print(f"Found {len(recent_deals)} deals from the past {days_back} days")
@@ -720,7 +721,7 @@ def update_tree_with_recent_deals(tree_json, deals_csv_path="deal_data/all_deals
     if len(recent_deals) == 0:
         return tree_json, 0, []
     
-    def format_multi_level_context(children, deal_description):
+    def format_multi_level_context(children):
         """Format children and their sub-categories for multi-level context window."""
         lines = []
         for name, child in children.items():
@@ -747,15 +748,58 @@ def update_tree_with_recent_deals(tree_json, deals_csv_path="deal_data/all_deals
         if "children" not in node or not node["children"]:
             return path  # Leaf node, stop here
 
-        multi_level_context = format_multi_level_context(node["children"], deal_description)
+        multi_level_context = format_multi_level_context(node["children"])
         
-        prompt = f"""
+        # Build path context to show where we are in the tree
+        path_context = ""
+        if path:
+            path_context = f"\nCurrent path in tree: {' > '.join(path)}"
+            path_context += f"\nYou are now choosing the next level under: {path[-1]}"
+        else:
+            path_context = "\nYou are at the root level of the tree."
+
+        # Special handling for root level - force choice from existing categories only
+        if not path:  # At root level
+            prompt = f"""
 You are an investment analyst categorizing a new deal into a thematic investment tree.
 
 Deal Description:
 ---
 {deal_description}
 ---
+{path_context}
+
+Available ROOT categories:
+---
+{multi_level_context}
+---
+
+CRITICAL INSTRUCTIONS FOR ROOT LEVEL:
+1. You MUST choose from one of the existing root categories shown above.
+2. DO NOT create new categories at the root level.
+3. Pick the best fit from: Commerce, Healthcare, Fintech, Other, AI, or Robotics.
+4. Consider the deal's industry, vertical, and business model as strong indicators.
+5. If unsure, use "Other" as the fallback category.
+
+Respond with ONLY the exact category name from the available options above.
+
+Examples:
+Fintech
+Healthcare  
+Commerce
+Other
+AI
+            """
+        else:
+            # For non-root levels, allow new category creation
+            prompt = f"""
+You are an investment analyst categorizing a new deal into a thematic investment tree.
+
+Deal Description:
+---
+{deal_description}
+---
+{path_context}
 
 Available categories and sub-categories:
 ---
@@ -763,16 +807,21 @@ Available categories and sub-categories:
 ---
 
 Instructions:
-1. Pick the most relevant top-level category (among children), or say "STOP" if you've reached the right level.
-2. Choose the category that best matches the deal's industry, technology, or business model.
+1. Pick the most relevant category from the available children options.
+2. If no existing category fits well, suggest ONE new category name that would be appropriate at this level.
+3. New categories should be at the same abstraction level as the existing options shown above.
+4. DO NOT suggest categories that duplicate or are too similar to categories already in the current path.
+5. Consider the deal's industry, vertical, and business model as strong indicators.
+6. Say "STOP" if you've reached the right level of classification for this deal.
 
 Respond with just the category name, or "STOP" if the current level is appropriate.
 
 Examples:
-Fintech
-Healthcare  
+Insurance & Risk
+Digital Therapeutics
+Supply Chain Solutions
 STOP
-        """
+            """
         
         try:
             response = client.chat.completions.create(
@@ -787,8 +836,23 @@ STOP
             
             choice = response.choices[0].message.content.strip()
             
-            if choice == "STOP" or choice not in node["children"]:
+            if choice == "STOP":
                 return path
+
+            if choice not in node["children"]:
+                # At root level, force selection from existing categories only
+                if not path:
+                    print(f"  ⚠️  Invalid root category suggested: {choice}, using fallback")
+                    # Use a simple fallback based on deal description
+                    return ["Other"]  # Default fallback for deals
+                
+                # For non-root levels, validate and allow new node creation
+                if len(choice) > 50 or any(char in choice for char in ['/', '\\', ':', '*', '?', '"', '<', '>', '|']):
+                    print(f"  ⚠️  Invalid node name suggested: {choice}, using fallback")
+                    return path  # Return current path as fallback
+                
+                print(f"  ✓ Will create new node: {choice}")
+                return path + [choice]
             
             return find_best_node_for_deal(node["children"][choice], deal_description, path + [choice])
         except Exception as e:
@@ -836,18 +900,49 @@ STOP
         return ". ".join(parts)
     
     def add_deal_to_node_by_path(tree_dict, path, deal_entry):
-        """Add a deal entry to a specific node's recent_news field using path."""
+        """Add a deal entry to a specific node's recent_news field using path, creating missing nodes as needed."""
         current_node = tree_dict
         
-        # Navigate to the correct node
-        for step in path:
-            if step in current_node:
+        # Navigate to the correct node, creating missing nodes along the way
+        for i, step in enumerate(path):
+            
+            # For the first segment, look directly in the tree
+            if i == 0:
+                if step not in current_node:
+                    # Create new top-level node
+                    print(f"  ✓ Creating new top-level node for deals: {step}")
+                    from datetime import datetime
+                    current_node[step] = {
+                        "meta": {
+                            "interest": f"New category created for deal announcements. Generated on {datetime.now().strftime('%Y-%m-%d')}.",
+                            "investment_status": "New",
+                            "last_updated": datetime.now().strftime('%Y-%m-%d'),
+                            "description": f"Auto-generated category for deal announcements"
+                        },
+                        "children": {}
+                    }
+                
                 current_node = current_node[step]
-                # If this is not the final step and we have children, go into children
-                if step != path[-1] and 'children' in current_node:
-                    current_node = current_node['children']
             else:
-                return False
+                # For subsequent segments, look in the children dictionary
+                if "children" not in current_node:
+                    current_node["children"] = {}
+                
+                if step not in current_node["children"]:
+                    # Create new child node
+                    print(f"  ✓ Creating new child node for deals: {step}")
+                    from datetime import datetime
+                    current_node["children"][step] = {
+                        "meta": {
+                            "interest": f"New subcategory created for deal announcements. Generated on {datetime.now().strftime('%Y-%m-%d')}.",
+                            "investment_status": "New", 
+                            "last_updated": datetime.now().strftime('%Y-%m-%d'),
+                            "description": f"Auto-generated subcategory for deal announcements"
+                        },
+                        "children": {}
+                    }
+                
+                current_node = current_node["children"][step]
         
         # Ensure meta exists
         if 'meta' not in current_node:
@@ -862,6 +957,7 @@ STOP
         else:
             current_node['meta']['recent_news'] = deal_entry
         
+        print(f"  ✓ Successfully added deal to node")
         return True
     
     # Create a root node structure to match the expected format for LLM analysis
@@ -1142,6 +1238,395 @@ def similarity_experiment():
         'all_deal_results': all_results,
         'consistency_scores': total_consistency_scores
     }
+
+def format_multi_level_context(children):
+    """Format children and their sub-categories for multi-level context window."""
+    
+    lines = []
+    for name, child in children.items():
+        meta = child.get("meta", {})
+        line = f"**{name}**"
+        
+        # Add metadata for the main category
+        if meta.get('description', '').strip():
+            line += f"\n  Description: {meta['description'][:500]}..."
+
+        if meta.get('interest', '').strip():
+            line += f"\n  Recent thoughts: {meta['interest'][:500]}..."
+        
+        # Add sub-categories preview
+        if 'children' in child and child['children']:
+            subcategories = list(child['children'].keys())
+            if subcategories:
+                line += f"\n  Sub-categories: {', '.join(subcategories)}"
+                
+        else:
+            line += "\n  [Leaf Category - No sub-categories]"
+        
+        lines.append(line)
+    
+    return "\n\n".join(lines)
+
+def update_tree_with_portfolio_companies(tree_json=None, portfolio_csv_path="data/portfolio.csv"):
+    """
+    Update the tree's portfolio metadata fields with companies from portfolio.csv.
+    Uses LLM to find the most appropriate node for each portfolio company.
+    
+    Args:
+        tree_json (dict): The loaded tree JSON (if None, loads from file)
+        portfolio_csv_path (str): Path to the portfolio CSV file
+        
+    Returns:
+        tuple: (updated_tree, companies_added_count, companies_processed)
+    """
+    import pandas as pd
+    import json
+    from openai import OpenAI
+    import os
+    from dotenv import load_dotenv
+    
+    # Load tree if not provided
+    if tree_json is None:
+        with open('data/taste_tree.json', 'r') as f:
+            tree_json = json.load(f)
+    
+    # Load OpenAI client
+    load_dotenv()
+    openai_api_key = os.getenv("OPENAI_API_KEY")
+    client = OpenAI(api_key=openai_api_key)
+    
+    # Load portfolio data
+    try:
+        portfolio_df = pd.read_csv(portfolio_csv_path)
+        print(f"Loaded {len(portfolio_df)} portfolio companies from {portfolio_csv_path}")
+    except Exception as e:
+        print(f"Error loading portfolio CSV: {e}")
+        return tree_json, 0, []
+    
+    # Filter for active companies with valid data
+    active_companies = portfolio_df[
+        (portfolio_df['Company Name'].notna()) &
+        (portfolio_df['Brief Description'].notna())
+    ].copy()
+    
+    print(f"Found {len(active_companies)} active portfolio companies")
+    
+    if len(active_companies) == 0:
+        return tree_json, 0, []
+    
+    def find_best_node_for_portfolio_company(node, company_name, category, sector, description, path=None):
+        """Find the best node for a portfolio company using recursive LLM analysis."""
+        if path is None:
+            path = []
+        
+        if "children" not in node or not node["children"]:
+            return path  # Leaf node, stop here
+
+        # Create company description for analysis
+        company_description = f"""
+        Company: {company_name}
+        Category: {category if pd.notna(category) else 'N/A'}
+        Sector: {sector if pd.notna(sector) else 'N/A'}
+        Description: {description}
+        """
+
+        multi_level_context = format_multi_level_context(node["children"])
+        
+        # Build path context to show where we are in the tree
+        path_context = ""
+        if path:
+            path_context = f"\nCurrent path in tree: {' > '.join(path)}"
+            path_context += f"\nYou are now choosing the next level under: {path[-1]}"
+        else:
+            path_context = "\nYou are at the root level of the tree."
+
+        # Special handling for root level - force choice from existing categories only
+        if not path:  # At root level
+            prompt = f"""
+You are an investment analyst categorizing a portfolio company into a thematic investment tree.
+
+Portfolio Company:
+---
+{company_description}
+---
+{path_context}
+
+Available ROOT categories:
+---
+{multi_level_context}
+---
+
+CRITICAL INSTRUCTIONS FOR ROOT LEVEL:
+1. You MUST choose from one of the existing root categories shown above.
+2. DO NOT create new categories at the root level.
+3. Pick the best fit from: Commerce, Healthcare, Fintech, Other, AI, or Robotics.
+4. Consider the company's category and sector fields as strong indicators.
+5. If unsure, use "Other" as the fallback category.
+
+Respond with ONLY the exact category name from the available options above.
+
+Examples:
+Fintech
+Healthcare  
+Commerce
+Other
+AI
+            """
+        else:
+            # For non-root levels, allow new category creation
+            prompt = f"""
+You are an investment analyst categorizing a portfolio company into a thematic investment tree.
+
+Portfolio Company:
+---
+{company_description}
+---
+{path_context}
+
+Available categories and sub-categories:
+---
+{multi_level_context}
+---
+
+Instructions:
+1. Pick the most relevant category from the available children options.
+2. If no existing category fits well, suggest ONE new category name that would be appropriate at this level.
+3. New categories should be at the same abstraction level as the existing options shown above.
+4. DO NOT suggest categories that duplicate or are too similar to categories already in the current path.
+5. Consider the company's category and sector fields as strong indicators.
+6. Say "STOP" if you've reached the right level of classification for this company.
+
+Respond with just the category name, or "STOP" if the current level is appropriate.
+
+Examples:
+Insurance & Risk
+Digital Therapeutics
+Supply Chain Solutions
+STOP
+            """
+        
+        try:
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": "You are an investment analyst deciding the best category for a portfolio company."},
+                    {"role": "user", "content": prompt.strip()}
+                ],
+                temperature=0.2,
+                max_tokens=30
+            )
+            
+            choice = response.choices[0].message.content.strip()
+            
+            if choice == "STOP":
+                return path
+
+            if choice not in node["children"]:
+                # At root level, force selection from existing categories only
+                if not path:
+                    print(f"  ⚠️  Invalid root category suggested: {choice}, using fallback")
+                    return map_category_to_path_recursive(node, category, sector, path)
+                
+                # For non-root levels, validate and allow new node creation
+                if len(choice) > 50 or any(char in choice for char in ['/', '\\', ':', '*', '?', '"', '<', '>', '|']):
+                    print(f"  ⚠️  Invalid node name suggested: {choice}, using fallback")
+                    return map_category_to_path_recursive(node, category, sector, path)
+                
+                print(f"  ✓ Will create new node: {choice}")
+                return path + [choice]
+            
+            return find_best_node_for_portfolio_company(
+                node["children"][choice], 
+                company_name, 
+                category, 
+                sector, 
+                description, 
+                path + [choice]
+            )
+        except Exception as e:
+            print(f"  Warning: LLM call failed for company categorization: {e}")
+            # Fallback to rule-based mapping
+            return map_category_to_path_recursive(node, category, sector, path)
+    
+    def map_category_to_path_recursive(node, category, sector, path):
+        """Recursive fallback mapping based on category and sector."""
+        category_str = str(category).lower() if pd.notna(category) else ""
+        sector_str = str(sector).lower() if pd.notna(sector) else ""
+        
+        if "children" not in node or not node["children"]:
+            return path  # Leaf node, stop here
+        
+        # Look for matching children based on category/sector
+        for child_name in node["children"]:
+            child_name_lower = child_name.lower()
+            
+            # FinTech mapping
+            if "fintech" in category_str or any(term in sector_str for term in ["finance", "insurtech", "lending", "payments", "banking"]):
+                if "fintech" in child_name_lower or "finance" in child_name_lower:
+                    return map_category_to_path_recursive(node["children"][child_name], category, sector, path + [child_name])
+            
+            # Healthcare mapping
+            if "healthcare" in category_str or any(term in sector_str for term in ["health", "digital health", "behavioral health"]):
+                if "health" in child_name_lower:
+                    return map_category_to_path_recursive(node["children"][child_name], category, sector, path + [child_name])
+            
+            # eCommerce/Retail mapping
+            if "ecommerce" in category_str or any(term in sector_str for term in ["retail", "beauty", "food", "apparel"]):
+                if any(term in child_name_lower for term in ["retail", "commerce", "consumer"]):
+                    return map_category_to_path_recursive(node["children"][child_name], category, sector, path + [child_name])
+            
+            # Technology mapping
+            if "technology" in category_str or any(term in sector_str for term in ["ai", "collaboration", "search"]):
+                if "technology" in child_name_lower or "ai" in child_name_lower:
+                    return map_category_to_path_recursive(node["children"][child_name], category, sector, path + [child_name])
+            
+            # Marketplace mapping
+            if "marketplace" in category_str:
+                if "marketplace" in child_name_lower:
+                    return map_category_to_path_recursive(node["children"][child_name], category, sector, path + [child_name])
+        
+        # If no specific match found, return current path
+        return path
+    
+    def add_company_to_node(tree, path, company_info):
+        """Add company to the portfolio field of the specified node, creating missing nodes as needed."""
+        current = tree
+        
+        # Navigate to the target node, creating missing nodes along the way
+        for i, segment in enumerate(path):
+            
+            # For the first segment, look directly in the tree
+            if i == 0:
+                if segment not in current:
+                    # Create new top-level node
+                    print(f"  ✓ Creating new top-level node: {segment}")
+                    from datetime import datetime
+                    current[segment] = {
+                        "meta": {
+                            "interest": f"New category created for portfolio companies. Generated on {datetime.now().strftime('%Y-%m-%d')}.",
+                            "investment_status": "New",
+                            "last_updated": datetime.now().strftime('%Y-%m-%d'),
+                            "description": f"Auto-generated category for portfolio companies"
+                        },
+                        "children": {}
+                    }
+                
+                current = current[segment]
+            else:
+                # For subsequent segments, look in the children dictionary
+                if "children" not in current:
+                    current["children"] = {}
+                
+                if segment not in current["children"]:
+                    # Create new child node
+                    print(f"  ✓ Creating new child node: {segment}")
+                    from datetime import datetime
+                    current["children"][segment] = {
+                        "meta": {
+                            "interest": f"New subcategory created for portfolio companies. Generated on {datetime.now().strftime('%Y-%m-%d')}.",
+                            "investment_status": "New", 
+                            "last_updated": datetime.now().strftime('%Y-%m-%d'),
+                            "description": f"Auto-generated subcategory for portfolio companies"
+                        },
+                        "children": {}
+                    }
+                
+                current = current["children"][segment]
+        
+        # Ensure meta exists
+        if "meta" not in current:
+            current["meta"] = {}
+        
+        # Ensure portfolio exists as a list
+        if "portfolio" not in current["meta"]:
+            current["meta"]["portfolio"] = []
+        
+        # Add company info
+        current["meta"]["portfolio"].append(company_info)
+        print(f"  ✓ Successfully added company to node")
+        return True
+    
+    # Process each portfolio company
+    companies_added = 0
+    companies_processed = []
+    
+    for idx, company in active_companies.iterrows():
+        company_name = company['Company Name']
+        category = company.get('Category', '')
+        sector = company.get('Sector', '')
+        description = company['Brief Description']
+        
+        print(f"\nProcessing: {company_name}")
+        print(f"Category: {category}, Sector: {sector}")
+        
+        # Find best placement using recursive traversal (starting from root)
+        wrapped_tree = {'children': tree_json}
+        path = find_best_node_for_portfolio_company(
+            wrapped_tree, company_name, category, sector, description
+        )
+        
+        if path:
+            print(f"Placing in: {' > '.join(path)}")
+            
+            # Create company info object
+            company_info = {
+                "company_name": company_name,
+                "brief_description": description,
+                "status": "Active",
+                "category": category if pd.notna(category) else "",
+                "sector": sector if pd.notna(sector) else "",
+                "montage_lead": company.get('Montage Lead', '') if pd.notna(company.get('Montage Lead', '')) else "",
+                "fund": company.get('Funds', '') if pd.notna(company.get('Funds', '')) else "",
+                "stage": company.get('Stage', '') if pd.notna(company.get('Stage', '')) else "",
+                "website": company.get('Website', '') if pd.notna(company.get('Website', '')) else ""
+            }
+            
+            # Add to tree
+            if add_company_to_node(tree_json, path, company_info):
+                companies_added += 1
+                companies_processed.append({
+                    'company': company_name,
+                    'path': ' > '.join(path),
+                    'category': category,
+                    'sector': sector
+                })
+            else:
+                print(f"Failed to add {company_name} to path: {' > '.join(path)}")
+        else:
+            print(f"Could not find placement for {company_name}")
+    
+    print(f"\nSuccessfully added {companies_added} companies to the tree")
+    return tree_json, companies_added, companies_processed
+
+
+def run_portfolio_integration():
+    """Convenience function to load tree, add portfolio companies, and save back."""
+    import json
+    
+    # Load the current tree
+    with open('data/taste_tree.json', 'r') as f:
+        tree = json.load(f)
+    
+    print("Starting portfolio company integration...")
+    
+    # Update tree with portfolio companies
+    updated_tree, companies_added, companies_processed = update_tree_with_portfolio_companies(tree)
+    
+    # Save the updated tree back to file
+    with open('data/taste_tree.json', 'w') as f:
+        json.dump(updated_tree, f, indent=2)
+    
+    print(f"\nPortfolio integration complete!")
+    print(f"Added {companies_added} companies to the tree")
+    print(f"Updated taste_tree.json saved successfully")
+    
+    # Print summary of placements
+    if companies_processed:
+        print(f"\nCompany placements:")
+        for company in companies_processed:
+            print(f"  {company['company']} → {company['path']}")
+    
+    return updated_tree, companies_added, companies_processed
 
 
 # -------------------

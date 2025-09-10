@@ -312,6 +312,7 @@ async def api_profile_info(query: str, user_id: str = "slack_user") -> str:
         logger.error(f"Error in API profile info: {e}")
         return f"Error getting profile information: {str(e)}"
 
+
 @function_tool
 async def api_company_info(query: str, user_id: str = "slack_user") -> str:
     """
@@ -416,6 +417,123 @@ async def api_company_info(query: str, user_id: str = "slack_user") -> str:
         logger.error(f"Error in API company info: {e}")
         return f"Error getting company information: {str(e)}"
 
+@function_tool
+async def get_sector_info(query: str, user_id: str = "slack_user") -> str:
+    """
+Given a sector or category (Like e-commerce, ai drug discovery, payments), return relevant information from Montage's market taxonomy.
+    """
+    try:
+        logger.info(f"Tool: get_sector_info | Query: '{query}'")
+        from .tree_tools import find_nodes_by_name
+        import re
+        import json
+
+        query_prompt = f"""
+        Someone at Montage has a request:
+        {query}
+        
+        You can find the relevant information by parsing Montage's market taxonomy tree. To find relevant information, return a short list of node titles that we should search for.
+        Some examples of nodes in the system are: Applied robotics, AI drug discovery, Payments,Healthcare, Commerce, Insurance, etc. in varying levels of abstraction.
+        
+        Return ONLY a valid JSON array with no additional text:
+        ["node1", "node2", "node3"]
+        """
+        
+        response = ask_monty(query_prompt, "", max_tokens=150)
+        
+        # Parse the LLM response to extract node names
+        try:
+            # Try to parse as JSON first
+            nodes = json.loads(response.strip())
+        except json.JSONDecodeError:
+            # Fallback: extract content between brackets using regex
+            match = re.search(r'\[(.*?)\]', response)
+            if match:
+                # Split by comma and clean up quotes
+                node_text = match.group(1)
+                nodes = [node.strip().strip('"\'') for node in node_text.split(',')]
+            else:
+                # Last resort: split by common delimiters and clean
+                nodes = [node.strip().strip('"\'') for node in re.split(r'[,\n]', response) if node.strip()]
+        
+        if not nodes:
+            return f"Could not extract node names from query: {query}"
+        
+        logger.info(f"Extracted nodes: {nodes}")
+        
+        # Load the taste tree
+        import json
+        import os
+        
+        # Try multiple possible paths for the taste tree
+        possible_paths = [
+            os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data', 'taste_tree.json'),
+            os.path.join(os.getcwd(), 'data', 'taste_tree.json'),
+            'data/taste_tree.json',
+            '/Users/matthildur/Desktop/monty2.0/data/taste_tree.json'
+        ]
+        
+        tree = None
+        for tree_path in possible_paths:
+            try:
+                if os.path.exists(tree_path):
+                    with open(tree_path, 'r') as f:
+                        tree = json.load(f)
+                    logger.info(f"Successfully loaded tree from: {tree_path}")
+                    break
+            except Exception as e:
+                logger.debug(f"Failed to load from {tree_path}: {e}")
+                continue
+        
+        if tree is None:
+            return f"Error: Could not load taste_tree.json from any expected location"
+        
+        info = ""
+        for node in nodes:
+            node_matches = find_nodes_by_name(tree, node.strip())
+            if node_matches:
+                for match in node_matches:
+                    info += f"\n--- {match['name']} ---\n"
+                    info += f"Path: {match['path']}\n"
+                    if match.get('investment_status'):
+                        info += f"Investment Status: {match['investment_status']}\n"
+                    if match.get('interest'):
+                        info += f"Interest: {match['interest']}\n"
+                    if match.get('recent_news'):
+                        info += f"Recent News: {match['recent_news'][:500]}...\n" if len(match['recent_news']) > 500 else f"Recent News: {match['recent_news']}\n"
+                    if match.get('portfolio_companies') and match['portfolio_companies'] > 0:
+                        info += f"Portfolio Companies: {match['portfolio_companies']}\n"
+                    if match.get('thesis'):
+                        info += f"Thesis: {match['thesis']}\n"
+                    if match.get('caution'):
+                        info += f"Caution: {match['caution']}\n"
+                    if match.get('montage_lead'):
+                        info += f"Montage Lead: {match['montage_lead']}\n"
+                    info += "\n"
+        
+        if not info:
+            return f"No information found for any nodes related to query: {query}"
+            
+        # Use LLM to interpret and format the results
+        interpretation_prompt = f"""
+        Interpret this data and provide a conversational summary about the sector/category.
+        Focus on investment thesis, recent news, portfolio companies, and key insights.
+        
+        Original query was: "{query}"
+        
+        Data from Montage's taxonomy:
+        {info}
+
+        Keep the response informative but conversational.
+        """
+        
+        interpretation = ask_monty(interpretation_prompt, "", max_tokens=400)
+        
+        return clean_markdown_formatting(interpretation)
+        
+    except Exception as e:
+        logger.error(f"Error in get_sector_info: {e}")
+        return f"Error getting sector information: {str(e)}"
 
 # Export all tools for easy import
 MONTY_TOOLS = [
@@ -423,5 +541,6 @@ MONTY_TOOLS = [
     notion_pipeline,
     api_profile_info,
     api_company_info,
+    get_sector_info,
     WebSearchTool()
 ]

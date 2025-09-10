@@ -1,0 +1,314 @@
+[
+    {
+        "key": "B2B",
+        "doc_count": 174250
+    },
+    {
+        "key": "Consumer",
+        "doc_count": 71274
+    },
+    {
+        "key": "Health",
+        "doc_count": 44930
+    },
+    {
+        "key": "Media and Entertainment",
+        "doc_count": 29638
+    },
+    {
+        "key": "Industrials",
+        "doc_count": 29626
+    },
+    {
+        "key": "Finance",
+        "doc_count": 27925
+    },
+    {
+        "key": "Financial Operations and Accounting",
+        "doc_count": 19197
+    },
+    {
+        "key": "Therapeutics",
+        "doc_count": 18628
+    },
+    {
+        "key": "Consumer Health and Wellness",
+        "doc_count": 18291
+    },
+    {
+        "key": "Data Analytics",
+        "doc_count": 17732
+    },
+    {
+        "key": "Legal",
+        "doc_count": 16554
+    },
+    {
+        "key": "Medical Research",
+        "doc_count": 16003
+    },
+    {
+        "key": "Supply Chain and Logistics",
+        "doc_count": 15024
+    },
+    {
+        "key": "Communication",
+        "doc_count": 14940
+    },
+    {
+        "key": "Manufacturing",
+        "doc_count": 14725
+    },
+    {
+        "key": "Education",
+        "doc_count": 13803
+    },
+    {
+        "key": "Marketing",
+        "doc_count": 13754
+    },
+    {
+        "key": "Biotechnology",
+        "doc_count": 13097
+    },
+    {
+        "key": "On-demand Healthcare Services",
+        "doc_count": 12609
+    },
+    {
+        "key": "Research Labs",
+        "doc_count": 12595
+    },
+    {
+        "key": "Food and Beverage",
+        "doc_count": 12158
+    },
+    {
+        "key": "Social",
+        "doc_count": 11745
+    },
+    {
+        "key": "Energy",
+        "doc_count": 11673
+    },
+    {
+        "key": "Climate",
+        "doc_count": 11260
+    },
+    {
+        "key": "Medical Devices",
+        "doc_count": 11258
+    },
+    {
+        "key": "Infrastructure",
+        "doc_count": 11236
+    },
+    {
+        "key": "Artificial Intelligence Research",
+        "doc_count": 10675
+    },
+    {
+        "key": "Security",
+        "doc_count": 10312
+    },
+    {
+        "key": "Software Devtools",
+        "doc_count": 10118
+    },
+    {
+        "key": "Automotive",
+        "doc_count": 9211
+    },
+    {
+        "key": "Retail",
+        "doc_count": 8942
+    },
+    {
+        "key": "Banking and Exchange Providers",
+        "doc_count": 8475
+    },
+    {
+        "key": "Drug Discovery and Delivery",
+        "doc_count": 8232
+    },
+    {
+        "key": "Consumer Finance",
+        "doc_count": 8073
+    },
+    {
+        "key": "Government",
+        "doc_count": 8055
+    },
+    {
+        "key": "Housing and Real Estate",
+        "doc_count": 7849
+    },
+    {
+        "key": "Credit and Lending",
+        "doc_count": 7670
+    },
+    {
+        "key": "Defense",
+        "doc_count": 7407
+    },
+    {
+        "key": "Gaming",
+        "doc_count": 7214
+    },
+    {
+        "key": "Healthcare Internal IT",
+        "doc_count": 6874
+    },
+    {
+        "key": "Asset Management",
+        "doc_count": 6696
+    },
+    {
+        "key": "Home Services",
+        "doc_count": 6625
+    },
+    {
+        "key": "No Code/Automation Tools",
+        "doc_count": 6431
+    },
+    {
+        "key": "Construction",
+        "doc_count": 6290
+    },
+    {
+        "key": "Film and TV",
+        "doc_count": 6105
+    },
+    {
+        "key": "Apparel and Cosmetics",
+        "doc_count": 6039
+    },
+    {
+        "key": "Payments",
+        "doc_count": 5947
+    },
+    {
+        "key": "K-12 Education",
+        "doc_count": 5715
+    },
+    {
+        "key": "Diagnostics",
+        "doc_count": 5589
+    },
+    {
+        "key": "Blockchain & Web3",
+        "doc_count": 5522
+    },
+    {
+        "key": "Compliance",
+        "doc_count": 5475
+    },
+    {
+        "key": "Events",
+        "doc_count": 5280
+    },
+    {
+        "key": "Transportation Services",
+        "doc_count": 5174
+    },
+    {
+        "key": "Publishing",
+        "doc_count": 5144
+    },
+    {
+        "key": "Sports",
+        "doc_count": 4899
+    },
+    {
+        "key": "Consumer Electronics",
+        "doc_count": 4887
+    },
+    {
+        "key": "Higher Education",
+        "doc_count": 4886
+    },
+    {
+        "key": "Productivity",
+        "doc_count": 4365
+    },
+    {
+        "key": "Travel, Leisure and Tourism",
+        "doc_count": 4317
+    },
+    {
+        "key": "Virtual and Augmented Reality",
+        "doc_count": 4237
+    },
+    {
+        "key": "Customer Support",
+        "doc_count": 4226
+    },
+    {
+        "key": "Insurance",
+        "doc_count": 4190
+    },
+    {
+        "key": "Human Resources",
+        "doc_count": 4173
+    },
+    {
+        "key": "Job and Career Services",
+        "doc_count": 4143
+    },
+    {
+        "key": "Outbound Sales",
+        "doc_count": 3898
+    },
+    {
+        "key": "Corporate Training",
+        "doc_count": 3418
+    },
+    {
+        "key": "Aviation and Space",
+        "doc_count": 3415
+    },
+    {
+        "key": "Music",
+        "doc_count": 3343
+    },
+    {
+        "key": "Data Engineering",
+        "doc_count": 3336
+    },
+    {
+        "key": "Robotics",
+        "doc_count": 3179
+    },
+    {
+        "key": "Recruiting and Talent",
+        "doc_count": 3135
+    },
+    {
+        "key": "Product Analytics",
+        "doc_count": 2777
+    },
+    {
+        "key": "Public Safety",
+        "doc_count": 2760
+    },
+    {
+        "key": "Agriculture",
+        "doc_count": 2729
+    },
+    {
+        "key": "Pet Care",
+        "doc_count": 2445
+    },
+    {
+        "key": "Drones",
+        "doc_count": 1530
+    },
+    {
+        "key": "Office Management",
+        "doc_count": 1075
+    },
+    {
+        "key": "Tutoring and Test Prep",
+        "doc_count": 793
+    }
+]
