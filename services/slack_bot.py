@@ -1,7 +1,7 @@
 import asyncio
 import os
 import logging
-from slack_sdk.socket_mode.async_client import AsyncSocketModeClient
+from slack_sdk.socket_mode.async_client import AsyncBaseSocketModeClient
 from slack_sdk.web.async_client import AsyncWebClient
 from slack_sdk.socket_mode.request import SocketModeRequest
 from slack_sdk.socket_mode.response import SocketModeResponse
@@ -20,10 +20,9 @@ logger = logging.getLogger("slack_bot")
 class MontySlackBot:
     def __init__(self):
         self.client = AsyncWebClient(token=os.getenv("SLACK_BOT_TOKEN"))
-        self.socket_client = AsyncSocketModeClient(
-            app_token=os.getenv("SLACK_APP_TOKEN"),
-            web_client=self.client
-        )
+        self.socket_client = AsyncBaseSocketModeClient()
+        self.socket_client.app_token = os.getenv("SLACK_APP_TOKEN")
+        self.socket_client.web_client = self.client
         
         # Conversation context storage
         self.conversations = {}  # channel_id -> list of messages
@@ -56,9 +55,7 @@ class MontySlackBot:
             - Use database_query for general data questions and statistics
             - Use company_insights for strategic analysis and trends
             """,
-            tools=MONTY_TOOLS,
-            model_settings=ModelSettings(reasoning=Reasoning(effort="minimal"), verbosity="low"),
-            model="gpt-5-nano"
+            tools=MONTY_TOOLS
         )
     
     async def process_message(self, req: SocketModeRequest):
