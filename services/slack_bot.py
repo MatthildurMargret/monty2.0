@@ -48,7 +48,7 @@ class MontySlackBot:
         # Initialize the OpenAI Agent with custom tools
         self.agent = Agent(
             name="Monty",
-            model_settings=ModelSettings(model="gpt-5-nano",reasoning=Reasoning(effort="minimal"), verbosity="low"),
+            model_settings=ModelSettings(model="gpt-5-nano"),
             instructions="""You are Monty, the most intelligent assistant at Montage Ventures. 
 
             Montage Ventures is an early stage VC firm in Menlo Park, investing across fintech, healthcare, and commerce.
