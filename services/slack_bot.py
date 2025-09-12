@@ -8,7 +8,7 @@ from slack_sdk.socket_mode.response import SocketModeResponse
 from dotenv import load_dotenv
 
 # Import OpenAI Agent SDK
-from agents import Agent, Runner, trace
+from agents import Agent, Runner, trace, ModelSettings
 
 # Import custom tools
 from services.slack_tools import MONTY_TOOLS
@@ -47,6 +47,7 @@ class MontySlackBot:
         # Initialize the OpenAI Agent with custom tools
         self.agent = Agent(
             name="Monty",
+            model_settings=ModelSettings(model="gpt-5-nano",reasoning=Reasoning(effort="minimal"), verbosity="low"),
             instructions="""You are Monty, the most intelligent assistant at Montage Ventures. 
 
             Montage Ventures is an early stage VC firm in Menlo Park, investing across fintech, healthcare, and commerce.
@@ -61,6 +62,7 @@ class MontySlackBot:
             IMPORTANT: Here is how Montage's lingo works:
             - "Portfolio" refers to companies we have invested in. The entire portfolio is in a csv file you can access.
             - "Pipeline" refers to companies we are currently evaluating or are about to meet, or have recently passed on. We keep track of this in Notion.
+            Note that companies that are in early diligence or that we haven't met yet are market as Qualifying or Evaluating, companies that we are deeper in diligence with are marked as Low, Medium, or High, some companies are marked as Track if we are not making a decision yet but want to see what they do, and we mark companies we've passed on as Passed.
             - We have specific investment theses that we refer to. These are documented in our investment theses database.
             - We have a market map that documents our thoughts, interests, portfolio companies, recent news and classifies by sectors and categories in a tree-like structure.
             - We have a sourcing engine that continously looks for potentially interesting founders. The results are stored in a database.
