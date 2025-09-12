@@ -67,6 +67,7 @@ class MontySlackBot:
             - We have specific investment theses that we refer to. These are documented in our investment theses database.
             - We have a market map that documents our thoughts, interests, portfolio companies, recent news and classifies by sectors and categories in a tree-like structure.
             - We have a sourcing engine that continously looks for potentially interesting founders. The results are stored in a database.
+            - It's VERY IMPORTANT to have a clear distinction between founders in the pipeline, in portfolio, in recent deal announcements, and in the sourcing database.
             
             You maintain conversation context, so you can:
             - Answer follow-up questions about previous results

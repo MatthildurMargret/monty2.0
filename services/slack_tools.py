@@ -72,11 +72,13 @@ async def early_stage_founder_query(query: str, user_id: str = "slack_user") -> 
         - profile_url: LinkedIn profile URL of the founder
         - name: Full name of the founder
         - company_name: Name of their startup
+        - description_1: Description of the startup
+        - product: Description of the product the startup offers
+        - market: Description of the market the startup sells into or operates in.
         - history: Text entry indicating whether we passed, recommended this one, etc. It will be an empty string or NULL if we haven't seen it yet.
         - founder: Boolean whether the person is a founder or not (true or false, lower case)
         - repeat_founder: Text whether the person is a repeat founder or not (true or false, lower case)
         - technical: Text whether the person is a technical founder or not (true or false, lower case)
-        - verticals: Comma-separated list of verticals the founder is working in and has experience in, including model confidence. Example: Blockchain (high), Web3 (high), NFT Development (medium)
         - location: Geographic location (city, state, country)
         - fundingamount: Total funding amount raised (A lot of them are empty strings or NULL, indicating no reported funding)
         - tree_path: Decision tree path for founder classification
@@ -91,6 +93,7 @@ async def early_stage_founder_query(query: str, user_id: str = "slack_user") -> 
         - "Show me founders from San Francisco" → "SELECT * FROM founders WHERE location LIKE '%San Francisco%' LIMIT 50;"
         - "How many founders are there?" → "SELECT COUNT(*) FROM founders;"
         - "Find AI founders" → "SELECT * FROM founders WHERE tree_path LIKE '%AI%' ORDER BY past_success_indication_score DESC LIMIT 50;"
+        - "I'm looking for founders that are building in stablecoins" → "SELECT * FROM founders WHERE (tree_path LIKE '%stablecoins%' OR product LIKE '%stablecoins%') ORDER BY past_success_indication_score DESC LIMIT 50;"
         
         Query: {query}
         
