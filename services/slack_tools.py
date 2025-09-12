@@ -47,7 +47,7 @@ def clean_markdown_formatting(text: str) -> str:
     return text
 
 @function_tool
-async def database_query(query: str, user_id: str = "slack_user") -> str:
+async def early_stage_founder_query(query: str, user_id: str = "slack_user") -> str:
     """Query the founder database using natural language.
     
     Args:
@@ -58,10 +58,10 @@ async def database_query(query: str, user_id: str = "slack_user") -> str:
         Formatted query results with interpretation
     """
     try:
-        logger.info(f"Tool: database_query | Query: '{query}'")
+        logger.info(f"Tool: early_stage_founder_query | Query: '{query}'")
         # Use LLM to convert natural language to SQL
         sql_prompt = f"""
-        You are a SQL expert. Convert this natural language query to a PostgreSQL query for a founder database.
+        You are a SQL expert. Convert this natural language query to a PostgreSQL query for Montage's early stage founder database.
         
         IMPORTANT: Always add "LIMIT 50" to your queries to prevent large result sets. If the user asks for counts, use COUNT(*) instead of SELECT *.
         AVOID using SELECT * and rather only select the columns that are needed for the query.
@@ -85,18 +85,12 @@ async def database_query(query: str, user_id: str = "slack_user") -> str:
         - past_success_indication_score: Score (0-10) indicating likelihood of past entrepreneurial success
         - startup_experience_score: Score (0-10) measuring startup/entrepreneurial expertise
         - all_experiences: Jsonb field containing ALL work experiences and background
-        
-        investment_theses table:
-        - thesis_title: Title/name of the investment thesis (For example, Fighting Financial Fraud)
-        - category: Category or sector of the investment thesis (fintech, healthcare, or commerce)
-        - thesis_text: Full text description of the investment thesis
-        - keywords: Comma-separated keywords related to the thesis
+    
         
         Examples:
-        - "Show me founders from San Francisco" → "SELECT * FROM founders WHERE location ILIKE '%San Francisco%' LIMIT 50;"
+        - "Show me founders from San Francisco" → "SELECT * FROM founders WHERE location LIKE '%San Francisco%' LIMIT 50;"
         - "How many founders are there?" → "SELECT COUNT(*) FROM founders;"
-        - "Find AI founders" → "SELECT * FROM founders WHERE verticals ILIKE '%AI%' ORDER BY past_success_indication_score DESC LIMIT 50;"
-        - "What are some problems highlighted in our cross-border payments thesis?" → "SELECT * FROM investment_theses WHERE thesis_title LIKE '%Cross-border payments%';"
+        - "Find AI founders" → "SELECT * FROM founders WHERE tree_path LIKE '%AI%' ORDER BY past_success_indication_score DESC LIMIT 50;"
         
         Query: {query}
         
@@ -171,6 +165,110 @@ async def database_query(query: str, user_id: str = "slack_user") -> str:
     except Exception as e:
         logger.error(f"Database query tool error: {e}")
         return f"❌ Error processing query: {str(e)}"
+    
+@function_tool
+async def investment_theme_query(query: str, user_id: str = "slack_user") -> str:
+    """Query the investment themes database using natural language.
+    
+    Args:
+        query: The natural language query to execute against the database
+        user_id: ID of the user making the query
+        
+    Returns:
+        Formatted query results with interpretation
+    """
+    try:
+        logger.info(f"Tool: investment_theme_query | Query: '{query}'")
+        # Use LLM to convert natural language to SQL
+        sql_prompt = f"""
+        You are a SQL expert. Convert this natural language query to a PostgreSQL query for Montage's investment themes database.
+        
+        Available tables and detailed column descriptions:
+    
+        investment_theses table:
+        - thesis_title: Title/name of the investment thesis (For example, Fighting Financial Fraud)
+        - category: Category or sector of the investment thesis (fintech, healthcare, or commerce)
+        - thesis_text: Full text description of the investment thesis
+        - keywords: Comma-separated keywords related to the thesis
+        
+        Examples:
+        - "What are some problems highlighted in our cross-border payments thesis?" → "SELECT * FROM investment_theses WHERE thesis_title LIKE '%Cross-border payments%';"
+        - "What fintech investment themes do we have outlined?" → "SELECT thesis_title FROM investment_theses WHERE category LIKE '%fintech%';"
+        - "What are some keywords associated with our AI for drug discovery thesis?" → "SELECT keywords FROM investment_theses WHERE thesis_title LIKE '%drug discovery%';"
+        
+        Query: {query}
+        
+        Return only the SQL query, no explanation:
+        """
+        
+        sql_query = ask_monty(sql_prompt, "", max_tokens=200)
+        
+        # Clean up SQL query - remove markdown code blocks if present
+        sql_query = sql_query.strip()
+        if sql_query.startswith("```sql"):
+            sql_query = sql_query[6:]
+        if sql_query.startswith("```"):
+            sql_query = sql_query[3:]
+        if sql_query.endswith("```"):
+            sql_query = sql_query[:-3]
+        sql_query = sql_query.strip()
+        
+        # Debug: Show the generated SQL query
+        logger.info(f"Generated SQL: {sql_query}")
+        
+        # Ensure LIMIT is present in SELECT queries to prevent large result sets
+        if sql_query.upper().startswith('SELECT') and 'COUNT(' not in sql_query.upper() and 'LIMIT' not in sql_query.upper():
+            sql_query = sql_query.rstrip(';') + ' LIMIT 50;'
+        
+        # Execute the query safely
+        conn = get_db_connection()
+        if not conn:
+            return "Database connection failed"
+            
+        cursor = conn.cursor()
+        cursor.execute(sql_query)
+        results = cursor.fetchall()
+        column_names = [desc[0] for desc in cursor.description]
+        
+        if not results:
+            return "No results found for your query."
+        
+        # Format results for Slack
+        df = pd.DataFrame(results, columns=column_names)
+        
+        # Debug: Show truncated results
+        logger.info(f"Query returned {len(results)} rows")
+        
+        # Cap the data sent to LLM to prevent token limits
+        max_rows_for_llm = min(25, len(results))  # Only send first 25 rows to LLM
+        df_truncated = df.head(max_rows_for_llm)
+        
+        # Use LLM to interpret and format the results
+        interpretation_prompt = f"""
+            The user asked: "{query}"
+
+            Here are the exact database results (don't alter these):
+            {df_truncated.to_string(index=False)}
+
+            Task:
+            1. Present the results clearly in bullet points or a table.
+            2. Then, provide a short summary at the end.
+            3. Do NOT change or re-write the raw values (titles, keywords, etc.). 
+            """
+        
+        # Limit the data size sent to LLM
+        results_text = df_truncated.to_string(max_rows=25)
+        if len(results_text) > 3000:  # Further truncate if still too large
+            results_text = results_text[:3000] + "... [truncated]"
+        
+        interpretation = ask_monty(interpretation_prompt, results_text, max_tokens=300)
+        
+        conn.close()
+        return clean_markdown_formatting(interpretation)
+        
+    except Exception as e:
+        logger.error(f"Database query tool error: {e}")
+        return f"❌ Error processing query: {str(e)}"
 
 @function_tool
 async def notion_pipeline(query: str, user_id: str = "slack_user") -> str:
@@ -204,6 +302,35 @@ async def notion_pipeline(query: str, user_id: str = "slack_user") -> str:
     """
     
     interpretation = ask_monty(interpretation_prompt, pipeline.to_string(max_rows=100), max_tokens=300)
+    
+    return clean_markdown_formatting(interpretation)
+
+@function_tool
+async def get_all_portfolio(query: str, user_id: str = "slack_user") -> str:
+    """Get the list of companies we've invested in.
+    
+    Args:
+        query: Natural language query about portfolio companies
+        user_id: ID of the user making the query
+        
+    Returns:
+        Pipeline company insights
+    """
+
+    logger.info(f"Tool: get_all_portfolio | Query: '{query}'")
+    portfolio = pd.read_csv("data/portfolio.csv")
+
+    # Use LLM to interpret and format the results
+    interpretation_prompt = f"""
+    Interpret these portfolio database results for a user query: "{query}"
+    
+    Results:
+    {portfolio.to_string(max_rows=100)}
+    
+    Provide a clear, conversational summary. If there are many results, highlight the most interesting findings.
+    """
+    
+    interpretation = ask_monty(interpretation_prompt, portfolio.to_string(max_rows=100), max_tokens=300)
     
     return clean_markdown_formatting(interpretation)
 
@@ -537,10 +664,10 @@ Given a sector or category (Like e-commerce, ai drug discovery, payments), retur
 
 # Export all tools for easy import
 MONTY_TOOLS = [
-    database_query,
+    investment_theme_query,
+    early_stage_founder_query,
     notion_pipeline,
-    api_profile_info,
-    api_company_info,
+    get_all_portfolio,
     get_sector_info,
     WebSearchTool()
 ]

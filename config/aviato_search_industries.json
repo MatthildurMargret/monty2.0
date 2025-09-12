@@ -10,12 +10,21 @@
         }
       },
       {
-        "name": "financial services",
+        "name": "finance",
         "description": "Financial technology, payments, insurance, and security companies",
-        "source": "Fintech & Financial Services Search",
+        "source": "Finance Search",
         "filter": {
           "region": "California",
-          "industryList": ["Financial Services"]
+          "industryList": ["Finance"]
+        }
+      },
+      {
+        "name": "software",
+        "description": "Financial technology, payments, insurance, and security companies",
+        "source": "Finance software Search",
+        "filter": {
+          "region": "California",
+          "industryList": ["Financial Software"]
         }
       },
       {
@@ -37,6 +46,24 @@
         }
       },
       {
+        "name": "biotech_pharma",
+        "description": "Biotechnology, digital health, genetics, and pharmaceutical companies",
+        "source": "Biotech & Pharmaceutical Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Biotechnology", "Genetics", "Pharmaceutical"]
+        }
+      },
+      {
+        "name": "digital_health",
+        "description": "Biotechnology, digital health, genetics, and pharmaceutical companies",
+        "source": "Digital Health Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Digital Health", "Pharmaceutical"]
+        }
+      },
+      {
         "name": "health_wellness",
         "description": "Beauty, fitness, personal health, and wellness companies",
         "source": "Health & Wellness Search",
@@ -54,15 +81,6 @@
           "country": "United States",
           "region": "California",
           "industryList": ["Health Information Technology"]
-        }
-      },
-      {
-        "name": "biotech_pharma",
-        "description": "Biotechnology, digital health, genetics, and pharmaceutical companies",
-        "source": "Biotech & Pharmaceutical Search",
-        "filter": {
-          "country": "United States",
-          "industryList": ["Biotechnology", "Digital Health", "Genetics", "Pharmaceutical"]
         }
       },
       {
@@ -143,6 +161,15 @@
           "country": "United States",
           "region": "California",
           "industryList": ["Video Games", "3D Technology", "VR", "AR"]
+        }
+      },
+      {
+        "name": "financial services",
+        "description": "Financial technology, payments, insurance, and security companies",
+        "source": "Fintech & Financial Services Search",
+        "filter": {
+          "region": "California",
+          "industryList": ["Financial Services"]
         }
       }
     ]

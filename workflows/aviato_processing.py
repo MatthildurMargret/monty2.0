@@ -1471,31 +1471,32 @@ if __name__ == "__main__":
 
     if args.discover:
         import json
-        all_founder_data = []
+        total_inserted = 0
         
         with open("config/aviato_search_industries.json", "r") as f:
             data = json.load(f)
             for search_config in data.get("search_filters", []):
-                # Collect founder data instead of inserting immediately
+                search_name = search_config.get("name", "unknown")
+                logger.info("Starting search: %s", search_name)
+                
+                # Collect founder data for this search
                 founder_data = aviato_search_collect(search_config.get("filter", {}), search_config.get("source", "aviato_search"))
+                
                 if founder_data:
-                    all_founder_data.extend(founder_data)
+                    # Convert to DataFrame and insert immediately
+                    df = pd.DataFrame(founder_data)
+                    logger.info("Inserting %d founders from %s search", len(df), search_name)
+                    
+                    success = insert_search_results(df, table_name="search_list")
+                    if success:
+                        total_inserted += len(df)
+                        logger.info("Successfully inserted %d founders from %s. Total so far: %d", len(df), search_name, total_inserted)
+                    else:
+                        logger.error("Failed to insert founder data from %s search", search_name)
+                else:
+                    logger.info("No founder data collected from %s search", search_name)
         
-        # Global deduplication and insertion
-        if all_founder_data:
-            df = pd.DataFrame(all_founder_data)
-            # Remove duplicates across all searches based on profile_url
-            original_count = len(df)
-            df = df.drop_duplicates(subset=['profile_url'], keep='first')
-            logger.info("Global deduplication: %d total founders, %d unique founders", original_count, len(df))
-            
-            success = insert_search_results(df, table_name="search_list")
-            if success:
-                logger.info("Successfully inserted %d unique founders to search_list", len(df))
-            else:
-                logger.error("Failed to insert founder data")
-        else:
-            logger.info("No founder data collected from any search")
+        logger.info("Discovery complete. Total founders inserted: %d", total_inserted)
     else:
         process_profiles_aviato(max_profiles=500)
         add_monty_data()

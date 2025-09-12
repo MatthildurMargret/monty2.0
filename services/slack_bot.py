@@ -55,6 +55,13 @@ class MontySlackBot:
             - Analyze funding deals and investment trends  
             - Get insights about companies and markets
             - Access detailed profile information via API enrichment
+
+            IMPORTANT: Here is how Montage's lingo works:
+            - "Portfolio" refers to companies we have invested in. The entire portfolio is in a csv file you can access.
+            - "Pipeline" refers to companies we are currently evaluating or are about to meet, or have recently passed on. We keep track of this in Notion.
+            - We have specific investment theses that we refer to. These are documented in our investment theses database.
+            - We have a market map that documents our thoughts, interests, portfolio companies, recent news and classifies by sectors and categories in a tree-like structure.
+            - We have a sourcing engine that continously looks for potentially interesting founders. The results are stored in a database.
             
             You maintain conversation context, so you can:
             - Answer follow-up questions about previous results
@@ -68,10 +75,10 @@ class MontySlackBot:
             - Keep responses conversational and easy to read in chat
             
             Use the appropriate tool based on the user's request:
-            - Use database_query to access the database of founders and companies you've analyzed that are in our sourcing engine, or to access the database of investment themes we have written about.
-            - Use notion_pipeline to access the database of companies in our pipeline (companies we've talked to and are evaluating, or are about to meet, or have passed on)
-            - Use api_profile_info to access detailed profile information via API enrichment, given a linkedin profile URL
-            - Use api_company_info to access detailed company information via API enrichment, given a company name
+            - Use investment_theme_query to access the database of investment themes we have written about.
+            - Use early_stage_founder_query to access the database of founders that are in our sourcing engine.
+            - Use notion_pipeline to access the database of companies in our pipeline
+            - Use get_all_portfolio to access the entire list of companies we've invested in.
             - Use get_sector_info to access Montage's market map and sector information, which contains portfolio companies, recent funding announcements, thoughts from IC, and more
             - Use websearch to search the web for information
             """,
