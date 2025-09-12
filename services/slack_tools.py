@@ -288,22 +288,95 @@ async def notion_pipeline(query: str, user_id: str = "slack_user") -> str:
     ID = "15e30f29-5556-4fe1-89f6-76d477a79bf8"
     pipeline = import_pipeline(ID)
 
-    # Debug: Show truncated results
-    logger.info(f"Query returned {len(pipeline)} rows")
+    logger.info(f"Pipeline contains {len(pipeline)} total companies")
     
-    # Use LLM to interpret and format the results
-    interpretation_prompt = f"""
-    Interpret these Notion Pipeline database results for a user query: "{query}"
+    # Smart chunking approach for 200-500 row datasets
+    # Calculate optimal chunk size based on estimated token usage
     
-    Results:
-    {pipeline.to_string(max_rows=100)}
+    # Estimate tokens per row (rough approximation)
+    sample_row = pipeline.iloc[0:1].to_string() if len(pipeline) > 0 else ""
+    estimated_tokens_per_row = len(sample_row.split()) * 1.3  # rough token estimate
     
-    Provide a clear, conversational summary. If there are many results, highlight the most interesting findings.
-    """
+    # Target ~1500 tokens per chunk to stay well under limits
+    target_tokens_per_chunk = 1500
+    optimal_chunk_size = max(10, min(100, int(target_tokens_per_chunk / estimated_tokens_per_row)))
     
-    interpretation = ask_monty(interpretation_prompt, pipeline.to_string(max_rows=100), max_tokens=300)
+    logger.info(f"Using chunk size of {optimal_chunk_size} rows (estimated {estimated_tokens_per_row:.1f} tokens per row)")
     
-    return clean_markdown_formatting(interpretation)
+    # Create chunks with the calculated size
+    chunks = [pipeline[i:i + optimal_chunk_size] for i in range(0, len(pipeline), optimal_chunk_size)]
+    
+    # First pass: Analyze each chunk and create summaries
+    chunk_summaries = []
+    for i, chunk in enumerate(chunks):
+        chunk_prompt = f"""
+        Analyze pipeline chunk {i+1}/{len(chunks)} for query: "{query}"
+        
+        Data ({len(chunk)} companies):
+        {chunk.to_string()}
+        
+        Extract key insights and patterns relevant to the query. Focus on:
+        - Companies that match the query criteria
+        - Notable trends or patterns
+        - Key data points
+        
+        Be specific and factual.
+        """
+        
+        summary = ask_monty(chunk_prompt, chunk.to_string(), max_tokens=250)
+        if summary.strip():
+            chunk_summaries.append(f"Chunk {i+1} ({len(chunk)} companies): {summary.strip()}")
+    
+    # Second pass: Create comprehensive analysis
+    # If we have many chunks, do a two-tier synthesis
+    if len(chunk_summaries) > 8:
+        # Group summaries and create intermediate summaries
+        summary_groups = [chunk_summaries[i:i + 4] for i in range(0, len(chunk_summaries), 4)]
+        intermediate_summaries = []
+        
+        for i, group in enumerate(summary_groups):
+            group_prompt = f"""
+            Synthesize these pipeline analysis summaries for query: "{query}"
+            
+            Summaries:
+            {chr(10).join(group)}
+            
+            Create a consolidated summary of key findings from this group.
+            """
+            
+            intermediate = ask_monty(group_prompt, "", max_tokens=200)
+            if intermediate.strip():
+                intermediate_summaries.append(f"Group {i+1}: {intermediate.strip()}")
+        
+        # Final synthesis from intermediate summaries
+        final_prompt = f"""
+        Provide final analysis for query: "{query}" based on complete pipeline review.
+        
+        Dataset: {len(pipeline)} total companies across {len(chunks)} chunks
+        
+        Consolidated findings:
+        {chr(10).join(intermediate_summaries)}
+        
+        Provide a comprehensive answer to the user's query with specific insights and data.
+        """
+        
+        final_analysis = ask_monty(final_prompt, "", max_tokens=500)
+    else:
+        # Direct synthesis for smaller number of chunks
+        final_prompt = f"""
+        Provide comprehensive analysis for query: "{query}" based on complete pipeline review.
+        
+        Dataset: {len(pipeline)} total companies analyzed across {len(chunks)} chunks
+        
+        Detailed findings:
+        {chr(10).join(chunk_summaries)}
+        
+        Synthesize these findings into a clear, comprehensive answer to the user's query.
+        """
+        
+        final_analysis = ask_monty(final_prompt, "", max_tokens=500)
+    
+    return clean_markdown_formatting(final_analysis)
 
 @function_tool
 async def get_all_portfolio(query: str, user_id: str = "slack_user") -> str:
@@ -314,7 +387,7 @@ async def get_all_portfolio(query: str, user_id: str = "slack_user") -> str:
         user_id: ID of the user making the query
         
     Returns:
-        Pipeline company insights
+        Portfolio company overview
     """
 
     logger.info(f"Tool: get_all_portfolio | Query: '{query}'")
@@ -327,10 +400,10 @@ async def get_all_portfolio(query: str, user_id: str = "slack_user") -> str:
     Results:
     {portfolio.to_string(max_rows=100)}
     
-    Provide a clear, conversational summary. If there are many results, highlight the most interesting findings.
+    Provide a clear, conversational summary. 
     """
     
-    interpretation = ask_monty(interpretation_prompt, portfolio.to_string(max_rows=100), max_tokens=300)
+    interpretation = ask_monty(interpretation_prompt, portfolio.to_string(max_rows=100), max_tokens=500)
     
     return clean_markdown_formatting(interpretation)
 
