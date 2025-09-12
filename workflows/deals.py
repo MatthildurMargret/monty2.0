@@ -362,7 +362,5 @@ if __name__ == "__main__":
     days_back = 7
     deals = updated_newsletter_deals(days_back=days_back)
     
-    deals = pd.read_csv("data/deal_data/all_deals.csv")
-    deals = deals[-50:]
     early_stage_deals = find_early_stage_deals(deals)
     #add_deals_to_database(early_stage_deals, 5)

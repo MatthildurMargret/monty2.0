@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 
 # Import OpenAI Agent SDK
 from agents import Agent, Runner, trace, ModelSettings
+from openai.types.shared import Reasoning
 
 # Import custom tools
 from services.slack_tools import MONTY_TOOLS
