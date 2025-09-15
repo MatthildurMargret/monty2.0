@@ -87,7 +87,7 @@ async def early_stage_founder_query(query: str, user_id: str = "slack_user") -> 
         - past_success_indication_score: Score (0-10) indicating likelihood of past entrepreneurial success
         - startup_experience_score: Score (0-10) measuring startup/entrepreneurial expertise
         - all_experiences: Jsonb field containing ALL work experiences and background
-    
+        - company_website: Website of the company
         
         Examples:
         - "Show me founders from San Francisco" → "SELECT * FROM founders WHERE location LIKE '%San Francisco%' LIMIT 50;"
@@ -151,7 +151,7 @@ async def early_stage_founder_query(query: str, user_id: str = "slack_user") -> 
 
             Task:
             1. Present the results clearly in bullet points or a table.
-            2. Then, provide a **short summary** at the end.
+            2. Include as much detail as exists on the results. If user asked for founders, give their profile urls, website urls, funding, location, and brief description.
             3. Do NOT change or re-write the raw values (titles, names, funding, etc). 
             """
         
@@ -160,7 +160,7 @@ async def early_stage_founder_query(query: str, user_id: str = "slack_user") -> 
         if len(results_text) > 3000:  # Further truncate if still too large
             results_text = results_text[:3000] + "... [truncated]"
         
-        interpretation = ask_monty(interpretation_prompt, results_text, max_tokens=300)
+        interpretation = ask_monty(interpretation_prompt, results_text, max_tokens=600)
         
         conn.close()
         return clean_markdown_formatting(interpretation)

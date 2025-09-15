@@ -171,6 +171,24 @@
           "region": "California",
           "industryList": ["Financial Services"]
         }
+      },
+      {
+        "name": "software",
+        "description": "Financial technology, payments, insurance, and security companies",
+        "source": "Software Search",
+        "filter": {
+          "region": "California",
+          "industryList": ["Software"]
+        }
+      },
+      {
+        "name": "information tech",
+        "description": "Financial technology, payments, insurance, and security companies",
+        "source": "Information Tech Search",
+        "filter": {
+          "region": "California",
+          "industryList": ["Information Technology"]
+        }
       }
     ]
   }
