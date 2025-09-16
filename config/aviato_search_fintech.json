@@ -1,0 +1,114 @@
+{
+    "search_filters": [
+      {
+        "name": "fintech",
+        "description": "Financial technology",
+        "source": "Fintech Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["FinTech"],
+          "totalFunding": 5000000,
+          "founded": 2021
+        }
+      },
+      {
+        "name": "finance",
+        "description": "Financial services",
+        "source": "Financial Services Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Finance"],
+          "totalFunding": 5000000,
+          "founded": 2021
+        }
+      },
+      {
+        "name": "financial software",
+        "description": "Financial software",
+        "source": "Financial Software Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Financial Software"],
+          "totalFunding": 5000000,
+          "founded": 2021
+        }
+      },
+      {
+        "name": "payments",
+        "description": "Payments",
+        "source": "Payments Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Payments"],
+          "totalFunding": 5000000,
+          "founded": 2021
+        }
+      },
+      {
+        "name": "insurance",
+        "description": "Insurance",
+        "source": "Insurance Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Insurance"],
+          "totalFunding": 5000000,
+          "founded": 2021
+        }
+      },
+      {
+        "name": "financial services",
+        "description": "Financial services",
+        "source": "Financial Services Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Financial Services"],
+          "totalFunding": 5000000,
+          "founded": 2021
+        }
+      },
+      {
+        "name": "accounting",
+        "description": "Accounting",
+        "source": "Accounting Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Accounting"],
+          "totalFunding": 5000000,
+          "founded": 2021
+        }
+      },
+      {
+        "name": "Banking",
+        "description": "Banking",
+        "source": "Banking Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Banking"],
+          "totalFunding": 5000000,
+          "founded": 2021
+        }
+      },
+      {
+        "name": "Technology, Information and Internet",
+        "description": "Technology, Information and Internet",
+        "source": "Technology, Information and Internet Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Technology, Information and Internet"],
+          "totalFunding": 5000000,
+          "founded": 2021
+        }
+      },
+      {
+        "name": "Asset Management",
+        "description": "Asset Management",
+        "source": "Asset Management Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Asset Management"],
+          "totalFunding": 5000000,
+          "founded": 2021
+        }
+      }
+    ]
+  }

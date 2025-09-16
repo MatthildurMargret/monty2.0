@@ -1,0 +1,103 @@
+{
+    "search_filters": [
+      {
+        "name": "healthcare",
+        "description": "Healthcare",
+        "source": "Healthcare Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Healthcare", "Health Care"],
+          "totalFunding": 5000000,
+          "founded": 2021
+        }
+      },
+      {
+        "name": "biotech",
+        "description": "Biotechnology",
+        "source": "Biotech Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Biotechnology"],
+          "totalFunding": 5000000,
+          "founded": 2021
+        }
+      },
+      {
+        "name": "genetics",
+        "description": "Genetics",
+        "source": "Genetics Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Genetics"],
+          "totalFunding": 5000000,
+          "founded": 2021
+        }
+      },
+      {
+        "name": "pharmaceuticals",
+        "description": "Pharmaceuticals",
+        "source": "Pharmaceuticals Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Pharmaceuticals"],
+          "totalFunding": 5000000,
+          "founded": 2021
+        }
+      },
+      {
+        "name": "digital_health",
+        "description": "Digital Health",
+        "source": "Digital Health Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Digital Health"],
+          "totalFunding": 5000000,
+          "founded": 2021
+        }
+      },
+      {
+        "name": "health & wellness",
+        "description": "Health & Wellness",
+        "source": "Health & Wellness Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Beauty", "Fitness", "Personal Health", "Wellness"],
+          "totalFunding": 5000000,
+          "founded": 2021
+        }
+      },
+      {
+        "name": "health information technology",
+        "description": "Health Information Technology",
+        "source": "Health Information Technology Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Health Information Technology"],
+          "totalFunding": 5000000,
+          "founded": 2021
+        }
+      },
+      {
+        "name": "medical",
+        "description": "Medical",
+        "source": "Medical Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Medical"],
+          "totalFunding": 5000000,
+          "founded": 2021
+        }
+      },
+      {
+        "name": "health diagnostics",
+        "description": "Health Diagnostics",
+        "source": "Health Diagnostics Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Health Diagnostics"],
+          "totalFunding": 5000000,
+          "founded": 2021
+        }
+      }
+    ]
+  }

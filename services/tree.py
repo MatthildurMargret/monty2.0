@@ -150,7 +150,7 @@ IF there is no good match for the company or we are at a sufficiently high level
     # Retry if invalid
     retry_count = 0
     while is_invalid_choice(choice, children) and retry_count < 2:
-        print(f"⚠️ Invalid output from model: '{choice}' — retrying...")
+        # Invalid output from model - retrying
         retry_prompt = f"""
     Your last output "{choice}" was invalid.
 

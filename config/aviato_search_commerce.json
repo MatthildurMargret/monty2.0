@@ -1,0 +1,125 @@
+{
+    "search_filters": [
+      {
+        "name": "ecommerce",
+        "description": "E-commerce",
+        "source": "E-commerce Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["E-Commerce"],
+          "totalFunding": 5000000,
+          "founded": 2021
+        }
+      },
+      {
+        "name": "retail",
+        "description": "Retail",
+        "source": "Retail Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Retail"],
+          "totalFunding": 5000000,
+          "founded": 2021
+        }
+      },
+      {
+        "name": "retail",
+        "description": "Retail",
+        "source": "Retail Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Retail Technology"],
+          "totalFunding": 5000000,
+          "founded": 2021
+        }
+      },
+      {
+        "name": "advertising",
+        "description": "Advertising",
+        "source": "Advertising Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Advertising"],
+          "totalFunding": 5000000,
+          "founded": 2021
+        }
+      },
+      {
+        "name": "content marketing",
+        "description": "Content Marketing",
+        "source": "Content Marketing Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Content Marketing"],
+          "totalFunding": 5000000,
+          "founded": 2021
+        }
+      },
+      {
+        "name": "content marketing",
+        "description": "Content Marketing",
+        "source": "Content Marketing Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Content", "Content Marketing", "Digital Marketing"],
+          "totalFunding": 5000000,
+          "founded": 2021
+        }
+      },
+      {
+        "name": "retail",
+        "description": "Retail",
+        "source": "Retail Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Consumer", "Consumer Goods", "Consumer Technology"],
+          "totalFunding": 5000000,
+          "founded": 2021
+        }
+      },
+      {
+        "name": "materials",
+        "description": "Materials",
+        "source": "Materials Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Materials", "Supply Chain Management"],
+          "totalFunding": 5000000,
+          "founded": 2021
+        }
+      },
+      {
+        "name": "industrials",
+        "description": "Industrials",
+        "source": "Industrials Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Industrial", "Industrial Automation"],
+          "totalFunding": 5000000,
+          "founded": 2021
+        }
+      },
+      {
+        "name": "wholesale",
+        "description": "Wholesale",
+        "source": "Wholesale Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Wholesale", "Commercial", "Distributors/Wholesale"],
+          "totalFunding": 5000000,
+          "founded": 2021
+        }
+      },
+      {
+        "name": "travel",
+        "description": "Travel",
+        "source": "Travel Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Travel"],
+          "totalFunding": 5000000,
+          "founded": 2021
+        }
+      }
+    ]
+  }

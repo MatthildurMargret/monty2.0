@@ -55,6 +55,12 @@ def insert_search_results(df, table_name="search_list", stealth_mode=False):
             if col not in df.columns:
                 df[col] = None  # Add missing columns with NULL values
         
+        # Remove duplicates within the batch to avoid ON CONFLICT issues
+        original_count = len(df)
+        df = df.drop_duplicates(subset=['profile_url'], keep='first')
+        if len(df) < original_count:
+            print(f"Removed {original_count - len(df)} duplicate profile_urls from batch")
+        
         # Prepare data for insertion
         data = [
             (

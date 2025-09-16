@@ -80,7 +80,7 @@ def sort_search_list(search_df):
         # Drop the temporary priority_score column
         search_df = search_df.drop(columns=['priority_score'])
         
-        logger.debug("Sorted profiles by founder-related keywords in title; prioritizing high-priority profiles first")
+        # Profiles sorted by founder-related keywords in title
     return search_df
 
 def bulk_enrich_profiles(urls: list) -> dict:
@@ -162,7 +162,7 @@ def sort_search_list(search_df):
         # Drop the temporary priority_score column
         search_df = search_df.drop(columns=['priority_score'])
         
-        print(f"Sorted profiles by founder-related keywords in title. Processing high-priority profiles first.")
+        # Profiles sorted by founder-related keywords in title
     return search_df
 
 def get_search_urls():
@@ -1182,25 +1182,50 @@ def search_aviato_companies(search_filters):
         dsl["nameQuery"] = search_filters["nameQuery"]
 
     # Build filters dynamically
-    filters = []
+    filter_conditions = []
     if "country" in search_filters:
-        filters.append({"country": {"operation": "eq", "value": search_filters["country"]}})
+        filter_conditions.append({"country": {"operation": "eq", "value": search_filters["country"]}})
     if "region" in search_filters:
-        filters.append({"region": {"operation": "eq", "value": search_filters["region"]}})
+        # Support both single region and multiple regions
+        region_value = search_filters["region"]
+        if isinstance(region_value, list):
+            filter_conditions.append({"region": {"operation": "in", "value": region_value}})
+        else:
+            filter_conditions.append({"region": {"operation": "eq", "value": region_value}})
     if "locality" in search_filters:
-        filters.append({"locality": {"operation": "eq", "value": search_filters["locality"]}})
+        # Support both single locality and multiple localities
+        locality_value = search_filters["locality"]
+        if isinstance(locality_value, list):
+            filter_conditions.append({"locality": {"operation": "in", "value": locality_value}})
+        else:
+            filter_conditions.append({"locality": {"operation": "eq", "value": locality_value}})
+    if "locationIDList" in search_filters:
+        filter_conditions.append({"locationIDList": {"operation": "in", "value": search_filters["locationIDList"]}})
     if "industryList" in search_filters:
-        filters.append({"industryList": {"operation": "in", "value": search_filters["industryList"]}})
+        filter_conditions.append({"industryList": {"operation": "in", "value": search_filters["industryList"]}})
     if "website" in search_filters:
-        filters.append({"website": {"operation": "eq", "value": search_filters["website"]}})
+        filter_conditions.append({"website": {"operation": "eq", "value": search_filters["website"]}})
     if "linkedin" in search_filters:
-        filters.append({"linkedin": {"operation": "eq", "value": search_filters["linkedin"]}})
+        filter_conditions.append({"linkedin": {"operation": "eq", "value": search_filters["linkedin"]}})
     if "twitter" in search_filters:
-        filters.append({"twitter": {"operation": "eq", "value": search_filters["twitter"]}})
+        filter_conditions.append({"twitter": {"operation": "eq", "value": search_filters["twitter"]}})
+    if "totalFunding" in search_filters:
+        filter_conditions.append({"totalFunding": {"operation": "lte", "value": search_filters["totalFunding"]}})
+    if "founded" in search_filters:
+        # Handle founded date - convert year to ISO datetime format for comparison
+        founded_value = search_filters["founded"]
+        if isinstance(founded_value, int):
+            # If it's a year, convert to end of year datetime for "lte" comparison
+            founded_value = f"{founded_value}-12-31T23:59:59Z"
+        elif isinstance(founded_value, str) and len(founded_value) == 4 and founded_value.isdigit():
+            # If it's a year string, convert to end of year datetime
+            founded_value = f"{founded_value}-12-31T23:59:59Z"
+        
+        filter_conditions.append({"founded": {"operation": "gte", "value": founded_value}})
     
-    # Attach filters if any
-    if filters:
-        dsl["filters"] = filters
+    # Wrap filters in AND structure if any exist
+    if filter_conditions:
+        dsl["filters"] = [{"AND": filter_conditions}]
 
     payload = {"dsl": dsl}
 
@@ -1455,25 +1480,14 @@ def aviato_search(search_filters, source="aviato_search"):
             logger.error("Failed to insert founder data")
     else:
         logger.info("No founder data to insert")
-    
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Aviato processing pipeline")
-    parser.add_argument(
-        "--discover",
-        action="store_true",
-        help="Run discovery search instead of processing pipeline",
-    )
 
-    args = parser.parse_args()
+def aviato_discover():
+    import json
+    total_inserted = 0
+    file_paths = ["config/aviato_search_fintech.json", "config/aviato_search_health.json", "config/aviato_search_commerce.json", "config/aviato_search_other.json"]
 
-    # Initialize logging using env LOG_LEVEL (INFO by default)
-    setup_logging()
-
-    if args.discover:
-        import json
-        total_inserted = 0
-        
-        with open("config/aviato_search_industries.json", "r") as f:
+    for file_path in file_paths:
+        with open(file_path, "r") as f:
             data = json.load(f)
             for search_config in data.get("search_filters", []):
                 search_name = search_config.get("name", "unknown")
@@ -1497,8 +1511,26 @@ if __name__ == "__main__":
                     logger.info("No founder data collected from %s search", search_name)
         
         logger.info("Discovery complete. Total founders inserted: %d", total_inserted)
+    
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Aviato processing pipeline")
+    parser.add_argument(
+        "--discover",
+        action="store_true",
+        help="Run discovery search instead of processing pipeline",
+    )
+
+    args = parser.parse_args()
+
+    # Initialize logging using env LOG_LEVEL (INFO by default)
+    setup_logging()
+
+    file_paths = ["config/aviato_search_fintech.json", "config/aviato_search_health.json", "config/aviato_search_commerce.json", "config/aviato_search_other.json"]
+
+    if args.discover:
+        aviato_discover()
     else:
-        process_profiles_aviato(max_profiles=500)
+        process_profiles_aviato(max_profiles=1000)
         add_monty_data()
         add_ai_scoring()
         add_tree_analysis()
