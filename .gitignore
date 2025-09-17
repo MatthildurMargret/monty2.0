@@ -23,6 +23,9 @@ env/
 /data/top_profiles/
 backup.sql
 
+/data/context/misc.txt
+/data/portfolio.csv
+
 # 🔹 Logs
 *.log
 logs/
