@@ -1059,7 +1059,7 @@ def add_ai_scoring():
     try:
         cursor = conn.cursor()
 
-        # Fetch profiles that need AI scoring
+        # Fetch profiles that need AI scoring (limit to prevent API overload)
         query = """
         SELECT * FROM founders 
         WHERE founder = true 
@@ -1069,6 +1069,7 @@ def add_ai_scoring():
              OR company_tech_score IS NULL 
              OR industry_expertise_score IS NULL)
         ORDER BY id DESC
+        LIMIT 50
         """
 
         cursor.execute(query)
@@ -1092,11 +1093,14 @@ def add_ai_scoring():
                 # Prepare update data
                 update_data = {}
 
+                import time
+                
                 # 1. Past Success Indication Score
                 if profile_dict.get("past_success_indication_score") is None:
                     try:
                         score = past_success_indication_score(profile_dict, json=True)
                         update_data["past_success_indication_score"] = score
+                        time.sleep(0.5)  # Rate limiting delay
                     except Exception as e:
                         logger.warning("Error scoring past success: %s", e, exc_info=True)
 
@@ -1105,6 +1109,7 @@ def add_ai_scoring():
                     try:
                         score = startup_experience_score(profile_dict, json=True)
                         update_data["startup_experience_score"] = score
+                        time.sleep(0.5)  # Rate limiting delay
                     except Exception as e:
                         logger.warning("Error scoring startup experience: %s", e, exc_info=True)
 
@@ -1113,6 +1118,7 @@ def add_ai_scoring():
                     try:
                         score = company_tech_score(profile_dict, json=True)
                         update_data["company_tech_score"] = score
+                        time.sleep(0.5)  # Rate limiting delay
                     except Exception as e:
                         logger.warning("Error scoring company tech: %s", e, exc_info=True)
 
@@ -1121,6 +1127,7 @@ def add_ai_scoring():
                     try:
                         score = prompt_industry_score(profile_dict, json=True)
                         update_data["industry_expertise_score"] = score
+                        time.sleep(0.5)  # Rate limiting delay
                     except Exception as e:
                         logger.warning("Error scoring industry expertise: %s", e, exc_info=True)
 
