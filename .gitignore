@@ -26,6 +26,8 @@ backup.sql
 /data/context/misc.txt
 /data/portfolio.csv
 
+!selective_processing_results.csv
+
 # 🔹 Logs
 *.log
 logs/

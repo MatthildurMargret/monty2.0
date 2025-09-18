@@ -1068,8 +1068,6 @@ def add_ai_scoring():
              OR startup_experience_score IS NULL 
              OR company_tech_score IS NULL 
              OR industry_expertise_score IS NULL)
-        ORDER BY id DESC
-        LIMIT 50
         """
 
         cursor.execute(query)

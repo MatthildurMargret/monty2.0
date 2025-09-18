@@ -1630,6 +1630,55 @@ def run_portfolio_integration():
 
 
 # -------------------
+# Context thoughts integration
+# -------------------
+def integrate_context_thoughts(tree_json):
+    """Integrate context thoughts from misc.txt into the tree"""
+    import os
+    from services.tree import insert_thought_into_tree
+    
+    # Path to the context file
+    context_file_path = 'data/context/misc.txt'
+    
+    if not os.path.exists(context_file_path):
+        print(f"Context file not found: {context_file_path}")
+        return tree_json
+    
+    print(f"Reading context thoughts from: {context_file_path}")
+    
+    try:
+        with open(context_file_path, 'r') as f:
+            thoughts = f.readlines()
+        
+        # Only process the last 30 thoughts to avoid overwhelming the tree
+        last_thoughts = thoughts[-30:] if len(thoughts) > 30 else thoughts
+        
+        print(f"Processing {len(last_thoughts)} recent thoughts...")
+        
+        processed_count = 0
+        for i, thought in enumerate(last_thoughts, 1):
+            thought = thought.strip()
+            if thought and len(thought) > 10:  # Skip empty or very short lines
+                print(f"Processing thought {i}/{len(last_thoughts)}: {thought[:100]}...")
+                try:
+                    insert_thought_into_tree(thought)
+                    processed_count += 1
+                except Exception as e:
+                    print(f"Error processing thought {i}: {e}")
+        
+        print(f"Successfully processed {processed_count} thoughts")
+        
+        # Reload the tree after modifications
+        with open('data/taste_tree.json', 'r') as f:
+            updated_tree = json.load(f)
+        
+        return updated_tree
+        
+    except Exception as e:
+        print(f"Error reading context file: {e}")
+        return tree_json
+
+# -------------------
 # Main
 # -------------------
 if __name__ == "__main__":
@@ -1638,6 +1687,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Tree analysis and testing tools')
     parser.add_argument('--similarity', action='store_true', help='Run similarity experiment')
     parser.add_argument('--deals', action='store_true', help='Run recent deals integration')
+    parser.add_argument('--context', action='store_true', help='Integrate context thoughts into tree')
     parser.add_argument('--duplicates', action='store_true', help='Run duplicate detection and cleanup')
     parser.add_argument('--flatten', action='store_true', help='Flatten tree to CSV')
     parser.add_argument('--validation', action='store_true', help='Run validation checks')
@@ -1647,7 +1697,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
     
     # If no specific test is selected, show help
-    if not any([args.similarity, args.deals, args.duplicates, args.flatten, args.validation, args.all]):
+    if not any([args.similarity, args.deals, args.context, args.duplicates, args.flatten, args.validation, args.all]):
         parser.print_help()
         print("\nExample usage:")
         print("  python test_tree.py --similarity")
@@ -1660,16 +1710,6 @@ if __name__ == "__main__":
     
     print(f"Loaded tree from: {json_path}")
     print(f"Running tests: {', '.join([name for name, value in vars(args).items() if value and name not in ['tree_path', 'all']])}")
-    
-    # Flatten tree to CSV
-    if args.flatten or args.all:
-        print("\n" + "="*50)
-        print("TREE FLATTENING")
-        print("="*50)
-        flat = flatten_tree(tree_json)
-        df = pd.DataFrame(flat)
-        df.to_csv("tree_flattened.csv", index=False)
-        print("Flattened tree saved to tree_flattened.csv")
 
     # Update tree with recent deals
     if args.deals or args.all:
@@ -1694,6 +1734,19 @@ if __name__ == "__main__":
             save_updated_tree(updated_tree)
         else:
             print("\nNo recent deals found in the past 7 days")
+
+    # Integrate context thoughts
+    if args.context or args.all:
+        print("\n" + "="*50)
+        print("CONTEXT THOUGHTS INTEGRATION")
+        print("="*50)
+
+        updated_tree = integrate_context_thoughts(tree_json)
+        
+        print("\nContext thoughts integration complete")
+        
+        # Save updated tree
+        save_updated_tree(updated_tree)
 
     # Check for duplicate thoughts within nodes
     if args.duplicates or args.all:
