@@ -794,7 +794,7 @@ def add_monty_data():
         logger.info("Profiles pending Monty data: %d", len(profiles))
         
         # Load priority dictionaries (you may need to adjust these paths)
-        priority_dict_person, priority_dict_company = update_pipeline_data(update=False)
+        priority_dict_person, priority_dict_company = update_pipeline_data(update=True)
         
         processed_count = 0
         
@@ -1489,7 +1489,7 @@ def aviato_search(search_filters, source="aviato_search"):
 def aviato_discover():
     import json
     total_inserted = 0
-    file_paths = ["config/aviato_search_fintech.json", "config/aviato_search_health.json", "config/aviato_search_commerce.json", "config/aviato_search_other.json"]
+    file_paths = ["config/aviato_search_fintech.json", "config/aviato_search_healthcare.json", "config/aviato_search_commerce.json", "config/aviato_search_other.json"]
 
     for file_path in file_paths:
         with open(file_path, "r") as f:
@@ -1530,7 +1530,7 @@ if __name__ == "__main__":
     # Initialize logging using env LOG_LEVEL (INFO by default)
     setup_logging()
 
-    file_paths = ["config/aviato_search_fintech.json", "config/aviato_search_health.json", "config/aviato_search_commerce.json", "config/aviato_search_other.json"]
+    file_paths = ["config/aviato_search_fintech.json", "config/aviato_search_healthcare.json", "config/aviato_search_commerce.json", "config/aviato_search_other.json"]
 
     if args.discover:
         aviato_discover()

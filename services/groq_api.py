@@ -12,6 +12,9 @@ def get_groq_response(prompt, model=free_models[0]):
     """Get a response from the Groq API."""
     client = Groq(api_key=os.environ.get("GROQ_API_KEY"))  # <-- Correct initialization
 
+    # Add rate limiting - wait between requests to avoid overwhelming the API
+    time.sleep(0.5)  # 500ms delay between requests
+    
     # Try all available models if needed
     available_models = free_models.copy()
     current_model = model
@@ -40,7 +43,7 @@ def get_groq_response(prompt, model=free_models[0]):
             
             # Handle rate limiting errors with exponential backoff
             if "rate limit" in error_msg.lower() or "too many requests" in error_msg.lower():
-                wait_time = retry_delay * (2 ** attempt)
+                wait_time = retry_delay * (2 ** attempt) + 5  # Add extra 5 seconds for rate limits
                 print(f"Rate limited. Waiting {wait_time} seconds before retry...")
                 time.sleep(wait_time)
                 continue

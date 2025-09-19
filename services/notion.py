@@ -170,8 +170,8 @@ def import_pipeline(ID):
         else:
             date = "No date"
 
-        location = entry['properties']['Location']['select']['name'] if entry['properties']['Location'][
-            'select'] else "No location"
+        #location = entry['properties']['Location']['select']['name'] if entry['properties']['Location'][
+        #    'select'] else "No location"
 
         description = entry['properties']['Brief Description']['rich_text'][0]['plain_text'] if entry['properties']['Brief Description'][
             'rich_text'] else "No description"
@@ -186,7 +186,7 @@ def import_pipeline(ID):
             "priority": priority,
             "founder": founder,
             "date": date,
-            "location": location,
+            #"location": location,
             "website": website,
             "description": description,
             "sector": sector

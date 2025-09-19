@@ -1160,14 +1160,29 @@ def insert_company_into_tree(company_data):
     
     # Insert the company into all nodes with the same name
     for duplicate in duplicate_nodes:
+        # Handle the data structure returned by find_nodes_by_name
+        if isinstance(duplicate, dict) and 'path' in duplicate:
+            # Convert path string to list if needed
+            if isinstance(duplicate['path'], str):
+                path_list = duplicate['path'].split(' > ')
+                full_path_display = duplicate['path']
+            else:
+                path_list = duplicate['path']
+                full_path_display = ' → '.join(path_list)
+        else:
+            print(f"  ✗ Invalid duplicate node structure: {duplicate}")
+            continue
+            
         # Navigate to each duplicate node
         dup_target_node = taste_tree
         try:
-            for category in duplicate['path']:
-                dup_target_node = dup_target_node[category]
-                # If this is not the final node, go into its children
-                if category != duplicate['path'][-1] and 'children' in dup_target_node:
-                    dup_target_node = dup_target_node['children']
+            for category in path_list:
+                if category in dup_target_node:
+                    dup_target_node = dup_target_node[category]
+                elif 'children' in dup_target_node and category in dup_target_node['children']:
+                    dup_target_node = dup_target_node['children'][category]
+                else:
+                    raise KeyError(f"Category '{category}' not found in tree structure")
             
             # Ensure meta exists
             if 'meta' not in dup_target_node:
@@ -1187,19 +1202,19 @@ def insert_company_into_tree(company_data):
                 dup_target_node['meta']['portfolio'] = current_portfolio
                 nodes_updated += 1
                 
-                print(f"  ✓ Added {company_name} to: {duplicate['full_path']}")
+                print(f"  ✓ Added {company_name} to: {full_path_display}")
             else:
-                print(f"  ⚠ {company_name} already exists in: {duplicate['full_path']}")
+                print(f"  ⚠ {company_name} already exists in: {full_path_display}")
                 
         except (KeyError, TypeError) as e:
-            print(f"  ✗ Failed to add to: {duplicate['full_path']} - {e}")
+            print(f"  ✗ Failed to add to: {full_path_display} - {e}")
     
     if nodes_updated > 0:
         print(f"✅ Successfully added {company_name} to {nodes_updated} nodes named '{final_node_name}'")
         
         # Save the updated tree
-        #with open(get_tree_path(), 'w') as f:
-        #    json.dump(taste_tree, f, indent=2)
+        with open(get_tree_path(), 'w') as f:
+            json.dump(taste_tree, f, indent=2)
     else:
         print(f"⚠ {company_name} was not added to any nodes (already exists or errors occurred)")
 
@@ -1551,7 +1566,7 @@ def find_similar_nodes(root_node, name):
 
 
 # Insert portfolio companies into the tree
-#portfolio_data = pd.read_csv('/Users/matthildur/monty/data/portfolio_all.csv')
+#portfolio_data = pd.read_csv('data/portfolio.csv')
 #for index, row in portfolio_data.iterrows():
 #    insert_company_into_tree(row)
 
