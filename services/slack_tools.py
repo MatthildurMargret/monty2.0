@@ -9,6 +9,67 @@ import logging
 
 logger = logging.getLogger("slack_tools")
 
+def extract_portfolio_from_tree_path(tree, path):
+    """
+    Extract portfolio companies from a specific tree path.
+    
+    Args:
+        tree: The full taste tree
+        path: Path like "Fintech > Insurance & Risk"
+        
+    Returns:
+        List of portfolio company dictionaries
+    """
+    logger.info(f"🔍 Extracting portfolio from path: {path}")
+    path_parts = [part.strip() for part in path.split('>')]
+    current_node = tree
+    
+    # Navigate to the specific node
+    for i, part in enumerate(path_parts):
+        logger.info(f"🔍 Looking for part '{part}' at level {i}")
+        if isinstance(current_node, dict):
+            found = False
+            # Check both direct keys and children
+            for key, value in current_node.items():
+                if key.strip() == part and isinstance(value, dict):
+                    current_node = value
+                    found = True
+                    logger.info(f"✅ Found '{part}' as direct key")
+                    break
+            
+            # If not found as direct key, check in children
+            if not found and 'children' in current_node:
+                children = current_node['children']
+                for key, value in children.items():
+                    if key.strip() == part and isinstance(value, dict):
+                        current_node = value
+                        found = True
+                        logger.info(f"✅ Found '{part}' in children")
+                        break
+            
+            if not found:
+                logger.warning(f"❌ Could not find '{part}' at level {i}")
+                logger.info(f"Available keys: {list(current_node.keys())}")
+                if 'children' in current_node:
+                    logger.info(f"Available children: {list(current_node['children'].keys())}")
+                return []
+        else:
+            logger.warning(f"❌ Current node is not dict at level {i}")
+            return []
+    
+    # Extract portfolio from meta
+    if isinstance(current_node, dict) and 'meta' in current_node:
+        portfolio = current_node['meta'].get('portfolio', [])
+        logger.info(f"📋 Found portfolio with {len(portfolio)} companies")
+        if isinstance(portfolio, list):
+            return portfolio
+    else:
+        logger.warning(f"❌ No meta found in final node")
+        if isinstance(current_node, dict):
+            logger.info(f"Available keys in final node: {list(current_node.keys())}")
+    
+    return []
+
 def clean_markdown_formatting(text: str) -> str:
     """Remove markdown formatting from text for Slack chat display.
     
@@ -408,6 +469,7 @@ async def get_all_portfolio(query: str, user_id: str = "slack_user") -> str:
     
     interpretation = ask_monty(interpretation_prompt, portfolio.to_string(max_rows=100), max_tokens=500)
     
+    logger.info(f"📤 TOOL OUTPUT: get_all_portfolio returned {len(portfolio)} companies: {interpretation[:100]}...")
     return clean_markdown_formatting(interpretation)
 
 @function_tool
@@ -635,34 +697,62 @@ Given a sector or category (Like e-commerce, ai drug discovery, payments), retur
         Someone at Montage has a request:
         {query}
         
-        You can find the relevant information by parsing Montage's market taxonomy tree. To find relevant information, return a short list of node titles that we should search for.
-        Some examples of nodes in the system are: Applied robotics, AI drug discovery, Payments,Healthcare, Commerce, Insurance, etc. in varying levels of abstraction.
+        You need to determine:
+        1. Which node titles to search for in the market taxonomy tree
+        2. Which metadata fields are relevant to extract from those nodes
         
-        Return ONLY a valid JSON array with no additional text:
-        ["node1", "node2", "node3"]
+        For node titles, think about common business/industry terms that would appear in a taxonomy:
+        - "AI for accounting" should search for "Accounting", "Back-Office Automation", "Financial Technology"
+        - "robotics" should search for "Robotics", "Automation" 
+        - "insurance" should search for "Insurance", "Risk"
+        - Use both specific terms and broader category names
+        
+        Available metadata fields: 
+        portfolio: The companies we have in our portfolio relevant to this node
+        recent_news: Recent funding announcements of companies relevant to this node
+        interest: Our thoughts and recent IC discussions around this space
+        investment_status: High, Low, Medium, Neutral, Exclude (indicates our level of interest in this space)
+        caution: Any points of caution or red flags we have around this space
+        montage_lead: Who on the team is most interested in this space
+        thesis: If we have a particular investment thesis around this space
+        description: A short description of the space
+        
+        Examples:
+        - If asking about portfolio companies: extract "portfolio" field
+        - If asking about recent news: extract "recent_news" field  
+        - If asking about investment thesis: extract "thesis" and "interest" fields
+        - If asking general info: extract multiple relevant fields (definitely thesis and interest)
+        
+        Return ONLY a valid JSON object:
+        {{
+            "nodes": ["node1", "node2", "node3"],
+            "fields": ["field1", "field2"]
+        }}
         """
         
         response = ask_monty(query_prompt, "", max_tokens=150)
         
-        # Parse the LLM response to extract node names
+        # Parse the LLM response to extract nodes and fields
         try:
             # Try to parse as JSON first
-            nodes = json.loads(response.strip())
+            query_config = json.loads(response.strip())
+            nodes = query_config.get('nodes', [])
+            fields = query_config.get('fields', ['portfolio', 'recent_news', 'interest'])  # default fields
         except json.JSONDecodeError:
-            # Fallback: extract content between brackets using regex
+            # Fallback: assume it's just nodes and use default fields
             match = re.search(r'\[(.*?)\]', response)
             if match:
-                # Split by comma and clean up quotes
                 node_text = match.group(1)
                 nodes = [node.strip().strip('"\'') for node in node_text.split(',')]
             else:
-                # Last resort: split by common delimiters and clean
                 nodes = [node.strip().strip('"\'') for node in re.split(r'[,\n]', response) if node.strip()]
+            fields = ['portfolio', 'recent_news', 'interest']  # default fields
         
         if not nodes:
             return f"Could not extract node names from query: {query}"
         
         logger.info(f"Extracted nodes: {nodes}")
+        logger.info(f"Extracting fields: {fields}")
         
         # Load the taste tree
         import json
@@ -694,44 +784,74 @@ Given a sector or category (Like e-commerce, ai drug discovery, payments), retur
         info = ""
         for node in nodes:
             node_matches = find_nodes_by_name(tree, node.strip())
+            logger.info(f"🔍 Searching for node '{node}' - found {len(node_matches)} matches")
             if node_matches:
                 for match in node_matches:
                     info += f"\n--- {match['name']} ---\n"
                     info += f"Path: {match['path']}\n"
-                    if match.get('investment_status'):
-                        info += f"Investment Status: {match['investment_status']}\n"
-                    if match.get('interest'):
-                        info += f"Interest: {match['interest']}\n"
-                    if match.get('recent_news'):
-                        info += f"Recent News: {match['recent_news'][:500]}...\n" if len(match['recent_news']) > 500 else f"Recent News: {match['recent_news']}\n"
-                    if match.get('portfolio_companies') and match['portfolio_companies'] > 0:
-                        info += f"Portfolio Companies: {match['portfolio_companies']}\n"
-                    if match.get('thesis'):
-                        info += f"Thesis: {match['thesis']}\n"
-                    if match.get('caution'):
-                        info += f"Caution: {match['caution']}\n"
-                    if match.get('montage_lead'):
-                        info += f"Montage Lead: {match['montage_lead']}\n"
+                    
+                    # Only extract requested fields
+                    for field in fields:
+                        if field == 'portfolio':
+                            # Extract portfolio data from the tree node
+                            logger.info(f"🏢 Attempting to extract portfolio from path: {match['path']}")
+                            portfolio_companies = extract_portfolio_from_tree_path(tree, match['path'])
+                            logger.info(f"🏢 Found {len(portfolio_companies)} portfolio companies")
+                            if portfolio_companies:
+                                info += f"Portfolio Companies:\n"
+                                for company in portfolio_companies:
+                                    info += f"  - {company.get('company_name', 'Unknown')}: {company.get('brief_description', '')}\n"
+                                    info += f"    Status: {company.get('status', 'N/A')}, Stage: {company.get('stage', 'N/A')}\n"
+                                    info += f"    Lead: {company.get('montage_lead', 'N/A')}, Fund: {company.get('fund', 'N/A')}\n"
+                            else:
+                                logger.warning(f"⚠️ No portfolio companies found for path: {match['path']}")
+                        elif field == 'recent_news' and match.get('recent_news'):
+                            info += f"Recent News: {match['recent_news'][:500]}...\n" if len(match['recent_news']) > 500 else f"Recent News: {match['recent_news']}\n"
+                        elif field == 'interest' and match.get('interest'):
+                            info += f"Interest: {match['interest']}\n"
+                        elif field == 'investment_status' and match.get('investment_status'):
+                            info += f"Investment Status: {match['investment_status']}\n"
+                        elif field == 'thesis' and match.get('thesis'):
+                            info += f"Thesis: {match['thesis']}\n"
+                        elif field == 'caution' and match.get('caution'):
+                            info += f"Caution: {match['caution']}\n"
+                        elif field == 'montage_lead' and match.get('montage_lead'):
+                            info += f"Montage Lead: {match['montage_lead']}\n"
+                        elif field == 'description' and match.get('description'):
+                            info += f"Description: {match['description']}\n"
                     info += "\n"
         
+        print("Information gathered:")
+        print(info)
+        logger.info(f"📋 Collected info length: {len(info)} characters")
+        logger.info(f"📋 Info preview: {info}...")
+        
         if not info:
+            logger.warning("⚠️ No information found for any nodes")
             return f"No information found for any nodes related to query: {query}"
             
         # Use LLM to interpret and format the results
         interpretation_prompt = f"""
-        Interpret this data and provide a conversational summary about the sector/category.
-        Focus on investment thesis, recent news, portfolio companies, and key insights.
+        You are Monty, Montage's AI assistant. Interpret the provided taxonomy data and answer the user's query directly.
+        If the user asked for portfolio companies, list all the companies shown in the portfolio data.
+        If the user asked for recent news, provide the news information.
+        If the user asked about general interest in certain areas, it's relevant to pull interest, portfolio, investment_status and especially thesis, which indicates whether we have published a thesis on the space.
+        If we have published a thesis on the space, it's definitely of high interest.
+        If the user asks about AI for X, you should look for nodes that mention X (not necessarily including the AI part)
         
-        Original query was: "{query}"
-        
-        Data from Montage's taxonomy:
-        {info}
-
         Keep the response informative but conversational.
         """
         
-        interpretation = ask_monty(interpretation_prompt, "", max_tokens=400)
+        user_data = f"""
+        User query: "{query}"
         
+        Data from Montage's taxonomy:
+        {info}
+        """
+        
+        interpretation = ask_monty(interpretation_prompt, user_data, max_tokens=400)
+        
+        logger.info(f"📤 TOOL OUTPUT: get_sector_info found {len([n for n in nodes if n])} nodes, returning: {interpretation[:100]}...")
         return clean_markdown_formatting(interpretation)
         
     except Exception as e:
@@ -740,10 +860,10 @@ Given a sector or category (Like e-commerce, ai drug discovery, payments), retur
 
 # Export all tools for easy import
 MONTY_TOOLS = [
-    investment_theme_query,
-    early_stage_founder_query,
-    notion_pipeline,
-    get_all_portfolio,
+    #investment_theme_query,
+    #early_stage_founder_query,
+    #notion_pipeline,
+    #get_all_portfolio,
     get_sector_info,
-    WebSearchTool()
+    #WebSearchTool()
 ]

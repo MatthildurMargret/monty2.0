@@ -90,13 +90,13 @@ class MontyApp:
     
     def schedule_cron_jobs(self):
         """Schedule the cron jobs"""
-        # Schedule aviato processing to run daily at 2 AM
-        schedule.every().day.at("02:00").do(self.run_aviato_processing)
+        # Schedule aviato processing to run daily at 2 AM PDT (9 AM UTC)
+        schedule.every().day.at("09:00").do(self.run_aviato_processing)
         
-        # Schedule discovery to run daily at 10 PM
-        schedule.every().day.at("22:00").do(self.run_discovery)
+        # Schedule discovery to run daily at 10 PM PDT (5 AM UTC next day)
+        schedule.every().day.at("05:00").do(self.run_discovery)
         
-        logger.info("Cron jobs scheduled")
+        logger.info("Cron jobs scheduled (times adjusted for UTC deployment)")
     
     def run_scheduler(self):
         """Run the scheduler in a separate thread"""
@@ -143,6 +143,11 @@ class MontyApp:
         if os.getenv("RUN_INITIAL_PROCESSING", "false").lower() == "true":
             logger.info("Running initial aviato processing...")
             await asyncio.get_event_loop().run_in_executor(None, self.run_aviato_processing)
+        
+        # Run initial discovery if requested
+        if os.getenv("RUN_INITIAL_DISCOVERY", "false").lower() == "true":
+            logger.info("Running initial aviato discovery...")
+            await asyncio.get_event_loop().run_in_executor(None, self.run_discovery)
         
         # Start Slack bot (this will run indefinitely)
         await self.start_slack_bot()

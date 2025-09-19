@@ -56,7 +56,7 @@ def merge_pipeline_portfolio(df):
     and founder columns instead of creating a duplicate.
     """
     # 1. Build the portfolio slice we want to merge
-    portfolio = pd.read_csv('data/portfolio_all.csv')
+    portfolio = pd.read_csv('data/portfolio.csv')
     columns = ['Company Name', 'Co-Founder/CEO']
     portfolio_simple = portfolio[columns].copy()
     portfolio_simple.loc[:, 'priority'] = 'portfolio'

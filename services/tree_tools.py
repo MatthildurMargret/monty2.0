@@ -138,36 +138,38 @@ def list_all_nodes(root_node):
     _walk(root_node)
     return all_nodes
 
-import json
-
-# Load your tree
-with open('data/taste_tree.json', 'r') as f:
-    tree = json.load(f)
-
-# Test the improved functions
-print("=== Find nodes by name ===")
-results = find_nodes_by_name(tree, "commerce")
-for result in results:
-    print(f"Name: {result['name']}")
-    print(f"Path: {result['path']}")
-    print(f"Has children: {result['has_children']} ({result['child_count']} children)")
-    print(f"Investment status: {result.get('investment_status', 'N/A')}")
-    print(f"Portfolio companies: {result.get('portfolio_companies', 0)}")
-    print(f"Interest: {result.get('interest', 'N/A')}")
-    print(f"Recent news: {result.get('recent_news', 'N/A')}")
-    print(f"Caution: {result.get('caution', 'N/A')}")
-    print(f"Montage lead: {result.get('montage_lead', 'N/A')}")
-    print(f"Last updated: {result.get('last_updated', 'N/A')}")
-    print(f"Description: {result.get('description', 'N/A')}")
-    print(f"Thesis: {result.get('thesis', 'N/A')}")
-    print()
-
-
-print("\n=== Search for AI content ===")
-ai_matches = search_tree_content(tree, "MCP")
-print("Found ", len(ai_matches), " nodes with mention of ", "MCP")
-for match in ai_matches[:5]:  # Show first 5 matches
-    print(f"Path: {match['path']}")
-    print(f"Field: {match['field']}")
-    print(f"Content: {match['content']}")
-    print()
+# Test functions (uncomment to run manually)
+# if __name__ == "__main__":
+#     import json
+#     
+#     # Load your tree
+#     with open('data/taste_tree.json', 'r') as f:
+#         tree = json.load(f)
+#     
+#     # Test the improved functions
+#     print("=== Find nodes by name ===")
+#     results = find_nodes_by_name(tree, "commerce")
+#     for result in results:
+#         print(f"Name: {result['name']}")
+#         print(f"Path: {result['path']}")
+#         print(f"Has children: {result['has_children']} ({result['child_count']} children)")
+#         print(f"Investment status: {result.get('investment_status', 'N/A')}")
+#         print(f"Portfolio companies: {result.get('portfolio_companies', 0)}")
+#         print(f"Interest: {result.get('interest', 'N/A')}")
+#         print(f"Recent news: {result.get('recent_news', 'N/A')}")
+#         print(f"Caution: {result.get('caution', 'N/A')}")
+#         print(f"Montage lead: {result.get('montage_lead', 'N/A')}")
+#         print(f"Last updated: {result.get('last_updated', 'N/A')}")
+#         print(f"Description: {result.get('description', 'N/A')}")
+#         print(f"Thesis: {result.get('thesis', 'N/A')}")
+#         print()
+#     
+#     
+#     print("\n=== Search for AI content ===")
+#     ai_matches = search_tree_content(tree, "MCP")
+#     print("Found ", len(ai_matches), " nodes with mention of ", "MCP")
+#     for match in ai_matches[:5]:  # Show first 5 matches
+#         print(f"Path: {match['path']}")
+#         print(f"Field: {match['field']}")
+#         print(f"Content: {match['content']}")
+#         print()
