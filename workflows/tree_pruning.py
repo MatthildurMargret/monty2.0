@@ -1,4 +1,5 @@
 import json
+import os
 import pandas as pd
 from collections import defaultdict
 from anytree import Node, RenderTree
@@ -1629,6 +1630,340 @@ def run_portfolio_integration():
     return updated_tree, companies_added, companies_processed
 
 
+def update_tree_with_pipeline_companies(tree_json=None, notion_database_id=None, limit=None):
+    """
+    Update the tree by classifying companies from the Montage Pipeline (Notion) and
+    inserting them into the taxonomy using their brief description and sector tags.
+
+    Args:
+        tree_json (dict): The loaded tree JSON (if None, loads from file)
+        notion_database_id (str): Notion database ID for the pipeline
+        limit (int|None): Optional max number of companies to process
+
+    Returns:
+        tuple: (updated_tree, companies_added_count, companies_processed)
+    """
+    import json
+    import os
+    from dotenv import load_dotenv
+    from openai import OpenAI
+    import pandas as pd
+    
+    # Load tree if not provided
+    if tree_json is None:
+        with open('data/taste_tree.json', 'r') as f:
+            tree_json = json.load(f)
+
+    # Load OpenAI client
+    load_dotenv()
+    openai_api_key = os.getenv("OPENAI_API_KEY")
+    client = OpenAI(api_key=openai_api_key)
+
+    # Import pipeline from Notion
+    try:
+        from services.notion import import_pipeline
+    except Exception as e:
+        print(f"Error importing Notion service: {e}")
+        return tree_json, 0, []
+
+    if not notion_database_id:
+        print("No Notion database ID provided for pipeline import.")
+        return tree_json, 0, []
+
+    try:
+        pipeline_df = import_pipeline(notion_database_id)
+        print(f"Loaded {len(pipeline_df)} pipeline companies from Notion")
+    except Exception as e:
+        print(f"Error loading pipeline from Notion: {e}")
+        return tree_json, 0, []
+
+    # Filter for rows with required fields
+    valid_df = pipeline_df[
+        (pipeline_df['company_name'].notna()) &
+        (pipeline_df['description'].notna())
+    ].copy()
+
+    if limit is not None:
+        valid_df = valid_df.head(limit)
+
+    print(f"Processing {len(valid_df)} pipeline companies")
+
+    def find_best_node_for_pipeline_company(node, company_name, sector_list, description, path=None):
+        """Find the best node for a pipeline company using recursive LLM analysis."""
+        if path is None:
+            path = []
+
+        if "children" not in node or not node["children"]:
+            return path  # Leaf node
+
+        sector_text = ", ".join(sector_list) if isinstance(sector_list, list) else str(sector_list or '')
+        company_description = f"""
+        Company: {company_name}
+        Sector tags: {sector_text if sector_text else 'N/A'}
+        Brief Description: {description}
+        """
+
+        multi_level_context = format_multi_level_context(node["children"])
+
+        # Build path context
+        path_context = "\nYou are at the root level of the tree." if not path else (
+            f"\nCurrent path in tree: {' > '.join(path)}\nYou are now choosing the next level under: {path[-1]}"
+        )
+
+        if not path:  # Root-level: only choose existing roots
+            prompt = f"""
+You are an investment analyst categorizing a pipeline company into a thematic investment tree.
+
+Pipeline Company:
+---
+{company_description}
+---
+{path_context}
+
+Available ROOT categories:
+---
+{multi_level_context}
+---
+
+CRITICAL INSTRUCTIONS FOR ROOT LEVEL:
+1. You MUST choose from one of the existing root categories shown above.
+2. DO NOT create new categories at the root level.
+3. Pick the best fit from: Commerce, Healthcare, Fintech, Other, AI, or Robotics.
+4. Consider the sector tags and brief description as strong indicators.
+5. If unsure, use "Other" as the fallback category.
+
+Respond with ONLY the exact category name from the available options above.
+"""
+        else:
+            prompt = f"""
+You are an investment analyst categorizing a pipeline company into a thematic investment tree.
+
+Pipeline Company:
+---
+{company_description}
+---
+{path_context}
+
+Available categories and sub-categories:
+---
+{multi_level_context}
+---
+
+Instructions:
+1. Pick the most relevant category from the available children options.
+2. If no existing category fits well, suggest ONE new category name that would be appropriate at this level.
+3. New categories should be at the same abstraction level as the existing options shown above.
+4. DO NOT suggest categories that duplicate or are too similar to categories already in the current path.
+5. Consider the sector tags and brief description as strong indicators.
+6. Say "STOP" if you've reached the right level of classification for this company.
+
+Respond with just the category name, or "STOP" if the current level is appropriate.
+"""
+
+        try:
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": "You are an investment analyst deciding the best category for a pipeline company."},
+                    {"role": "user", "content": prompt.strip()}
+                ],
+                temperature=0.2,
+                max_tokens=30
+            )
+            choice = response.choices[0].message.content.strip()
+
+            if choice == "STOP":
+                return path
+
+            if choice not in node["children"]:
+                # At root level, force existing selection
+                if not path:
+                    print(f"  ⚠️  Invalid root category suggested: {choice}, using fallback")
+                    return map_sector_to_path_recursive(node, sector_list, path)
+
+                # Validate new child name
+                if len(choice) > 50 or any(c in choice for c in ['/', '\\', ':', '*', '?', '"', '<', '>', '|']):
+                    print(f"  ⚠️  Invalid node name suggested: {choice}, using fallback")
+                    return map_sector_to_path_recursive(node, sector_list, path)
+
+                print(f"  ✓ Will create new node: {choice}")
+                return path + [choice]
+
+            return find_best_node_for_pipeline_company(
+                node["children"][choice], company_name, sector_list, description, path + [choice]
+            )
+        except Exception as e:
+            print(f"  Warning: LLM call failed for pipeline categorization: {e}")
+            return map_sector_to_path_recursive(node, sector_list, path)
+
+    def map_sector_to_path_recursive(node, sector_list, path):
+        """Fallback mapping based on sector tags when LLM fails or suggests invalid categories."""
+        sectors = [s.lower() for s in (sector_list or [])]
+        if "children" not in node or not node["children"]:
+            return path
+
+        for child_name in node["children"]:
+            cl = child_name.lower()
+            # Simple heuristics
+            if any(s in ["fintech", "finance", "insurtech", "lending", "payments", "banking"] for s in sectors):
+                if "fintech" in cl or "finance" in cl:
+                    return map_sector_to_path_recursive(node["children"][child_name], sector_list, path + [child_name])
+            if any("health" in s for s in sectors):
+                if "health" in cl:
+                    return map_sector_to_path_recursive(node["children"][child_name], sector_list, path + [child_name])
+            if any(s in ["commerce", "retail", "consumer", "ecommerce", "beauty", "food", "apparel"] for s in sectors):
+                if any(term in cl for term in ["retail", "commerce", "consumer"]):
+                    return map_sector_to_path_recursive(node["children"][child_name], sector_list, path + [child_name])
+            if any("ai" in s or "machine learning" in s for s in sectors):
+                if "ai" in cl or "technology" in cl:
+                    return map_sector_to_path_recursive(node["children"][child_name], sector_list, path + [child_name])
+            if any("marketplace" in s for s in sectors):
+                if "marketplace" in cl:
+                    return map_sector_to_path_recursive(node["children"][child_name], sector_list, path + [child_name])
+
+        return path
+
+    def add_pipeline_company_to_node(tree, path, company_info):
+        """Add a pipeline log line to the node's meta.pipeline string, creating missing nodes as needed.
+        Format: "[YYYY-MM-DD] Company name, brief description, sector" (most recent at top)
+        """
+        current = tree
+
+        # Walk and create nodes as needed
+        for i, segment in enumerate(path):
+            if i == 0:
+                if segment not in current:
+                    from datetime import datetime
+                    print(f"  ✓ Creating new top-level node: {segment}")
+                    current[segment] = {
+                        "meta": {
+                            "interest": f"New category created for pipeline companies. Generated on {datetime.now().strftime('%Y-%m-%d')}.",
+                            "investment_status": "New",
+                            "last_updated": datetime.now().strftime('%Y-%m-%d'),
+                            "description": f"Auto-generated category for pipeline companies"
+                        },
+                        "children": {}
+                    }
+                current = current[segment]
+            else:
+                if "children" not in current:
+                    current["children"] = {}
+                if segment not in current["children"]:
+                    from datetime import datetime
+                    print(f"  ✓ Creating new child node: {segment}")
+                    current["children"][segment] = {
+                        "meta": {
+                            "interest": f"New subcategory created for pipeline companies. Generated on {datetime.now().strftime('%Y-%m-%d')}",
+                            "investment_status": "New",
+                            "last_updated": datetime.now().strftime('%Y-%m-%d'),
+                            "description": f"Auto-generated subcategory for pipeline companies"
+                        },
+                        "children": {}
+                    }
+                current = current["children"][segment]
+
+        # Ensure meta exists
+        if "meta" not in current:
+            current["meta"] = {}
+
+        # Build the pipeline entry line
+        from datetime import datetime
+        today = datetime.now().strftime('%Y-%m-%d')
+        name = company_info.get('company_name') or ''
+        desc = company_info.get('brief_description') or ''
+        sector_text = company_info.get('sector') or ''
+        entry_line = f"[{today}] {name}, {desc}, {sector_text}".strip()
+
+        # Ensure meta.pipeline exists as a string log; convert old types if needed
+        existing = current["meta"].get("pipeline", "")
+        if isinstance(existing, list):
+            # Convert list of dicts/strings to a single string (best-effort)
+            def to_line(item):
+                if isinstance(item, dict):
+                    n = item.get('company_name') or ''
+                    d = item.get('brief_description') or ''
+                    s = item.get('sector') or ''
+                    return f"{n}, {d}, {s}".strip(', ')
+                return str(item)
+            existing_lines = [to_line(it) for it in existing if it]
+            existing = "\n".join(existing_lines)
+        elif not isinstance(existing, str):
+            existing = str(existing) if existing is not None else ""
+
+        # Prepend the new entry
+        new_log = entry_line if not existing else f"{entry_line}\n{existing}"
+        current["meta"]["pipeline"] = new_log
+
+        print("  ✓ Successfully added pipeline entry to node")
+        return True
+
+    # Process each pipeline company
+    companies_added = 0
+    companies_processed = []
+
+    for idx, row in valid_df.iterrows():
+        name = row.get('company_name')
+        description = row.get('description')
+        sector = row.get('sector')  # list
+        priority = row.get('priority', '')
+        founder = row.get('founder', '')
+        website = row.get('website', '')
+        date = row.get('date', '')
+
+        print(f"\nProcessing pipeline company: {name}")
+        wrapped_tree = {"children": tree_json}
+        path = find_best_node_for_pipeline_company(wrapped_tree, name, sector, description)
+
+        if not path:
+            print(f"  ⚠️  No placement path found for {name}, skipping")
+            continue
+
+        print(f"Placing in: {' > '.join(path)}")
+
+        company_info = {
+            "company_name": name,
+            "brief_description": description,
+            "priority": priority,
+            "founder": founder,
+            "website": website,
+            "date": date,
+            "sector": ", ".join(sector) if isinstance(sector, list) else str(sector or "")
+        }
+
+        if add_pipeline_company_to_node(tree_json, path, company_info):
+            companies_added += 1
+            companies_processed.append({
+                'company': name,
+                'path': ' > '.join(path),
+                'priority': priority,
+                'sector': company_info['sector']
+            })
+
+    print(f"\nSuccessfully added {companies_added} pipeline companies to the tree")
+    return tree_json, companies_added, companies_processed
+
+
+def run_pipeline_integration(notion_database_id, limit=None):
+    """Convenience function to load tree, add pipeline companies from Notion, and save back."""
+    import json
+
+    with open('data/taste_tree.json', 'r') as f:
+        tree = json.load(f)
+
+    print("Starting pipeline company integration...")
+    updated_tree, companies_added, companies_processed = update_tree_with_pipeline_companies(tree, notion_database_id, limit)
+
+    with open('data/taste_tree.json', 'w') as f:
+        json.dump(updated_tree, f, indent=2)
+
+    print(f"\nPipeline integration complete! Added {companies_added} companies. Updated taste_tree.json saved.")
+    if companies_processed:
+        print("\nCompany placements:")
+        for c in companies_processed:
+            print(f"  {c['company']} → {c['path']}")
+    return updated_tree, companies_added, companies_processed
+
+
 # -------------------
 # Context thoughts integration
 # -------------------
@@ -1687,6 +2022,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Tree analysis and testing tools')
     parser.add_argument('--similarity', action='store_true', help='Run similarity experiment')
     parser.add_argument('--deals', action='store_true', help='Run recent deals integration')
+    parser.add_argument('--pipeline', action='store_true', help='Run pipeline companies integration from Notion')
     parser.add_argument('--context', action='store_true', help='Integrate context thoughts into tree')
     parser.add_argument('--duplicates', action='store_true', help='Run duplicate detection and cleanup')
     parser.add_argument('--flatten', action='store_true', help='Flatten tree to CSV')
@@ -1697,7 +2033,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
     
     # If no specific test is selected, show help
-    if not any([args.similarity, args.deals, args.context, args.duplicates, args.flatten, args.validation, args.all]):
+    if not any([args.similarity, args.deals, args.pipeline, args.context, args.duplicates, args.flatten, args.validation, args.all]):
         parser.print_help()
         print("\nExample usage:")
         print("  python test_tree.py --similarity")
@@ -1717,7 +2053,7 @@ if __name__ == "__main__":
         print("RECENT DEALS INTEGRATION")
         print("="*50)
 
-        updated_tree, deals_added, deals_processed = update_tree_with_recent_deals(tree_json, days_back=30)
+        updated_tree, deals_added, deals_processed = update_tree_with_recent_deals(tree_json, days_back=7)
 
         if deals_added > 0:
             print(f"\nSuccessfully added {deals_added} recent deals to the taxonomy tree")
@@ -1734,6 +2070,22 @@ if __name__ == "__main__":
             save_updated_tree(updated_tree)
         else:
             print("\nNo recent deals found in the past 7 days")
+
+    # Integrate pipeline companies from Notion
+    if args.pipeline or args.all:
+        print("\n" + "="*50)
+        print("PIPELINE COMPANIES INTEGRATION")
+        print("="*50)
+
+        # The Notion database ID can be set here or passed via env/arg; keeping simple for now
+        notion_db_id = "15e30f29-5556-4fe1-89f6-76d477a79bf8"
+
+        updated_tree, companies_added, companies_processed = update_tree_with_pipeline_companies(tree_json, notion_db_id)
+        if companies_added > 0:
+            save_updated_tree(updated_tree)
+            print("Saved tree")
+        else:
+            print("\nNo pipeline companies added")
 
     # Integrate context thoughts
     if args.context or args.all:
