@@ -865,5 +865,5 @@ MONTY_TOOLS = [
     #notion_pipeline,
     #get_all_portfolio,
     get_sector_info,
-    #WebSearchTool()
+    WebSearchTool()
 ]
