@@ -709,6 +709,7 @@ Given a sector or category (Like e-commerce, ai drug discovery, payments), retur
         
         Available metadata fields: 
         portfolio: The companies we have in our portfolio relevant to this node
+        pipeline: The companies we are currently evaluating or are about to meet, or have recently passed on. (Companies in our pipeline)
         recent_news: Recent funding announcements of companies relevant to this node
         interest: Our thoughts and recent IC discussions around this space
         investment_status: High, Low, Medium, Neutral, Exclude (indicates our level of interest in this space)
@@ -719,6 +720,7 @@ Given a sector or category (Like e-commerce, ai drug discovery, payments), retur
         
         Examples:
         - If asking about portfolio companies: extract "portfolio" field
+        - If asking about companies in our pipeline: extract "pipeline" field
         - If asking about recent news: extract "recent_news" field  
         - If asking about investment thesis: extract "thesis" and "interest" fields
         - If asking general info: extract multiple relevant fields (definitely thesis and interest)
