@@ -21,10 +21,10 @@ env/
 !/data/*.csv
 !/data/deal_data/**
 /data/top_profiles/
+!/data/portfolio.csv
 backup.sql
 
 /data/context/misc.txt
-/data/portfolio.csv
 
 !selective_processing_results.csv
 
