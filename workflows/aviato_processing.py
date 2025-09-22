@@ -8,6 +8,8 @@ import pandas as pd
 import logging
 from typing import Optional
 import argparse
+import time
+import random
 
 load_dotenv()
 
@@ -41,6 +43,78 @@ def setup_logging(level: Optional[str] = None):
     if logger.level > logging.DEBUG:
         logging.getLogger("urllib3").setLevel(logging.WARNING)
         logging.getLogger("requests").setLevel(logging.WARNING)
+
+# ---- Aviato rate limiting and retry/backoff utilities ----
+
+# Configurable via env vars
+AVIATO_RPM = int(os.getenv("AVIATO_RPM", "30"))  # default 30 requests/minute
+AVIATO_MAX_RETRIES = int(os.getenv("AVIATO_MAX_RETRIES", "5"))
+AVIATO_BASE_BACKOFF = float(os.getenv("AVIATO_BASE_BACKOFF", "0.8"))  # seconds
+
+_last_request_ts = 0.0
+_min_interval = 60.0 / max(AVIATO_RPM, 1)
+
+def _wait_for_rate_limit():
+    """Sleep if needed to maintain the configured RPM."""
+    global _last_request_ts
+    now = time.monotonic()
+    elapsed = now - _last_request_ts
+    if elapsed < _min_interval:
+        time.sleep(_min_interval - elapsed)
+    _last_request_ts = time.monotonic()
+
+def request_with_backoff(method: str, url: str, *, headers=None, json=None, params=None, max_retries: Optional[int] = None):
+    """
+    Perform an HTTP request with rate limiting and exponential backoff.
+    Respects Retry-After and backs off on 429 and 5xx.
+    Returns a requests.Response or None if all retries failed.
+    """
+    retries = 0
+    max_retries = AVIATO_MAX_RETRIES if max_retries is None else max_retries
+
+    while True:
+        try:
+            _wait_for_rate_limit()
+            resp = requests.request(method, url, headers=headers, json=json, params=params)
+
+            # Success path
+            if resp.status_code < 400:
+                return resp
+
+            # If rate limited or server error, compute backoff
+            if resp.status_code in (429,) or 500 <= resp.status_code < 600:
+                retries += 1
+                if retries > max_retries:
+                    logger.error("Max retries exceeded for %s %s | Status %s | Snippet: %s", method, url, resp.status_code, resp.text[:200])
+                    return resp
+
+                # Honor Retry-After if present
+                retry_after = resp.headers.get("Retry-After")
+                if retry_after:
+                    try:
+                        delay = float(retry_after)
+                    except ValueError:
+                        delay = AVIATO_BASE_BACKOFF * (2 ** (retries - 1))
+                else:
+                    delay = AVIATO_BASE_BACKOFF * (2 ** (retries - 1))
+
+                # Add jitter [0, 0.5s]
+                delay += random.random() * 0.5
+                logger.warning("Backing off %.2fs after status %s for %s %s (attempt %d/%d)", delay, resp.status_code, method, url, retries, max_retries)
+                time.sleep(delay)
+                continue
+
+            # Other client errors: return response to let caller handle
+            return resp
+
+        except requests.RequestException as e:
+            retries += 1
+            if retries > max_retries:
+                logger.error("HTTP error after retries for %s %s: %s", method, url, e)
+                return None
+            delay = AVIATO_BASE_BACKOFF * (2 ** (retries - 1)) + random.random() * 0.5
+            logger.warning("Exception on %s %s: %s. Retrying in %.2fs (attempt %d/%d)", method, url, str(e), delay, retries, max_retries)
+            time.sleep(delay)
 
 
 relevant_keys = ["id", "fullName", "location", "URLs", "headline", "linkedinID", "linkedinNumID", "linkedinEntityID", 
@@ -88,12 +162,20 @@ def bulk_enrich_profiles(urls: list) -> dict:
     Call Aviato's /person/bulk/enrich endpoint with a list of LinkedIn URLs.
     """
     payload = prepare_bulk_payload(urls)
-    response = requests.post(
+    response = request_with_backoff(
+        "POST",
         "https://data.api.aviato.co/person/bulk/enrich",
         headers={"Authorization": "Bearer " + aviato_api},
         json=payload,
     )
-    response.raise_for_status()
+    if response is None:
+        logger.error("Bulk enrich request failed with no response")
+        return {}
+    try:
+        response.raise_for_status()
+    except Exception as e:
+        logger.error("Bulk enrich HTTP error: %s | Snippet: %s", e, response.text[:200] if hasattr(response, 'text') else '')
+        return {}
     
     # Check if response has content
     if not response.text.strip():
@@ -108,7 +190,8 @@ def bulk_enrich_profiles(urls: list) -> dict:
         return {}
 
 def enrich_profile(linkedin_id, linkedin_url=None):
-    response = requests.get(
+    response = request_with_backoff(
+        "GET",
         "https://data.api.aviato.co/person/enrich?linkedinID=" + linkedin_id,
         headers={
             "Authorization": "Bearer " + aviato_api
@@ -116,22 +199,23 @@ def enrich_profile(linkedin_id, linkedin_url=None):
     )
     
     # Check if response is successful
-    if response.status_code != 200:
+    if response is None or response.status_code != 200:
         logger.error("API error for LinkedIn ID %s: Status %s | Snippet: %s", linkedin_id, response.status_code, response.text[:200])
         if linkedin_url:
-            response = requests.get(
+            response = request_with_backoff(
+                "GET",
                 "https://data.api.aviato.co/person/enrich?linkedinURL=" + linkedin_url,
                 headers={
                     "Authorization": "Bearer " + aviato_api
                 },
-            )     
-            if response.status_code != 200:
+            )
+            if response is None or response.status_code != 200:
                 logger.error("API error for LinkedIn URL %s: Status %s | Snippet: %s", linkedin_url, response.status_code, response.text[:200])
                 return None
         return None
 
     # Check if response has content
-    if not response.text.strip():
+    if response is None or not response.text.strip():
         logger.warning("Empty response for LinkedIn ID %s", linkedin_id)
         return None
     
@@ -272,7 +356,8 @@ def map_aviato_to_schema(person: dict) -> dict:
 
 def enrich_company(company_id, profile_dict):
     # Enrich (GET /company/enrich)
-    response = requests.get(
+    response = request_with_backoff(
+        "GET",
         "https://data.api.aviato.co/company/enrich?id=" + company_id,
         headers={
             "Authorization": "Bearer " + aviato_api
@@ -280,12 +365,12 @@ def enrich_company(company_id, profile_dict):
     )
     
     # Check if response is successful
-    if response.status_code != 200:
+    if response is None or response.status_code != 200:
         logger.error("Company API error for ID %s: Status %s", company_id, response.status_code)
         return profile_dict  # Return unchanged profile
     
     # Check if response has content
-    if not response.text.strip():
+    if response is None or not response.text.strip():
         logger.warning("Empty company response for ID %s", company_id)
         return profile_dict  # Return unchanged profile
     
@@ -334,7 +419,8 @@ def enrich_company_raw(company_website):
     Enrich company data using website URL via Aviato API.
     Returns the raw company data from the API.
     """
-    response = requests.get(
+    response = request_with_backoff(
+        "GET",
         "https://data.api.aviato.co/company/enrich?website=" + company_website,
         headers={
             "Authorization": "Bearer " + aviato_api
@@ -342,13 +428,13 @@ def enrich_company_raw(company_website):
     )
     
     # Check if response is successful
-    if response.status_code != 200:
+    if response is None or response.status_code != 200:
         logger.error("Company API error for website %s: Status %s | Snippet: %s", 
                     company_website, response.status_code, response.text[:200])
         return None
     
     # Check if response has content
-    if not response.text.strip():
+    if response is None or not response.text.strip():
         logger.warning("Empty company response for website %s", company_website)
         return None
     
