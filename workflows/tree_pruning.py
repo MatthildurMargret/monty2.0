@@ -1872,7 +1872,12 @@ Respond with just the category name, or "STOP" if the current level is appropria
         name = company_info.get('company_name') or ''
         desc = company_info.get('brief_description') or ''
         sector_text = company_info.get('sector') or ''
-        entry_line = f"[{today}] {name}, {desc}, {sector_text}".strip()
+        website = (company_info.get('website') or '').strip()
+        status = (company_info.get('priority') or '').strip()
+        # Include website to improve dedup fidelity on future runs
+        website_part = f" {website}" if website else ""
+        status_part = f" | Status: {status}" if status else ""
+        entry_line = f"[{today}] {name},{website_part} {desc}, {sector_text}{status_part}".strip()
 
         # Ensure meta.pipeline exists as a string log; convert old types if needed
         existing = current["meta"].get("pipeline", "")
