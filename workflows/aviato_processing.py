@@ -10,6 +10,7 @@ from typing import Optional
 import argparse
 import time
 import random
+from urllib.parse import unquote
 
 load_dotenv()
 
@@ -24,8 +25,12 @@ def setup_logging(level: Optional[str] = None):
     Logs to stdout with a concise format suitable for Railway.
     """
     if logger.handlers:
-        # Already configured
+        # Already configured - prevent duplicate handlers
         return
+    
+    # Prevent propagation to root logger to avoid duplicate messages
+    logger.propagate = False
+    
     log_level_str = level or os.getenv("LOG_LEVEL", "INFO")
     try:
         log_level = getattr(logging, log_level_str.upper())
@@ -47,12 +52,17 @@ def setup_logging(level: Optional[str] = None):
 # ---- Aviato rate limiting and retry/backoff utilities ----
 
 # Configurable via env vars
-AVIATO_RPM = int(os.getenv("AVIATO_RPM", "30"))  # default 30 requests/minute
+AVIATO_RPM = int(os.getenv("AVIATO_RPM", "20"))  # default 20 requests/minute (reduced from 30)
 AVIATO_MAX_RETRIES = int(os.getenv("AVIATO_MAX_RETRIES", "5"))
-AVIATO_BASE_BACKOFF = float(os.getenv("AVIATO_BASE_BACKOFF", "0.8"))  # seconds
+AVIATO_BASE_BACKOFF = float(os.getenv("AVIATO_BASE_BACKOFF", "1.0"))  # seconds (increased from 0.8)
+AVIATO_FOUNDER_RPM = int(os.getenv("AVIATO_FOUNDER_RPM", "6"))  # separate limiter for founders endpoint
 
 _last_request_ts = 0.0
 _min_interval = 60.0 / max(AVIATO_RPM, 1)
+
+# Dedicated limiter for the founder lookup endpoint
+_founder_last_request_ts = 0.0
+_founder_min_interval = 60.0 / max(AVIATO_FOUNDER_RPM, 1)
 
 def _wait_for_rate_limit():
     """Sleep if needed to maintain the configured RPM."""
@@ -62,6 +72,15 @@ def _wait_for_rate_limit():
     if elapsed < _min_interval:
         time.sleep(_min_interval - elapsed)
     _last_request_ts = time.monotonic()
+
+def _wait_for_founder_rate_limit():
+    """Sleep if needed to respect the founders endpoint RPM."""
+    global _founder_last_request_ts
+    now = time.monotonic()
+    elapsed = now - _founder_last_request_ts
+    if elapsed < _founder_min_interval:
+        time.sleep(_founder_min_interval - elapsed)
+    _founder_last_request_ts = time.monotonic()
 
 def request_with_backoff(method: str, url: str, *, headers=None, json=None, params=None, max_retries: Optional[int] = None):
     """
@@ -124,8 +143,11 @@ relevant_keys = ["id", "fullName", "location", "URLs", "headline", "linkedinID",
 def get_linkedin_id(url: str) -> str:
     """
     Extract the LinkedIn ID (last path segment) from a LinkedIn profile URL.
+    Decodes URL-encoded characters to handle special characters properly.
     """
-    return url.rstrip("/").split("/")[-1]
+    linkedin_id = url.rstrip("/").split("/")[-1]
+    # Decode URL-encoded characters (e.g., %c2%ae -> ®, %c3%a3 -> ã)
+    return unquote(linkedin_id)
 
 def prepare_bulk_payload(urls: list) -> dict:
     """
@@ -200,7 +222,13 @@ def enrich_profile(linkedin_id, linkedin_url=None):
     
     # Check if response is successful
     if response is None or response.status_code != 200:
-        logger.error("API error for LinkedIn ID %s: Status %s | Snippet: %s", linkedin_id, response.status_code, response.text[:200])
+        # Only log 404 as warning, not error (profile doesn't exist in Aviato)
+        if response and response.status_code == 404:
+            logger.warning("Profile not found in Aviato for LinkedIn ID %s (404)", linkedin_id)
+        else:
+            logger.error("API error for LinkedIn ID %s: Status %s | Snippet: %s", linkedin_id, response.status_code if response else "None", response.text[:200] if response else "No response")
+        
+        # Try with URL if available and first attempt failed
         if linkedin_url:
             response = request_with_backoff(
                 "GET",
@@ -210,9 +238,13 @@ def enrich_profile(linkedin_id, linkedin_url=None):
                 },
             )
             if response is None or response.status_code != 200:
-                logger.error("API error for LinkedIn URL %s: Status %s | Snippet: %s", linkedin_url, response.status_code, response.text[:200])
+                if response and response.status_code == 404:
+                    logger.warning("Profile not found in Aviato for LinkedIn URL %s (404)", linkedin_url)
+                else:
+                    logger.error("API error for LinkedIn URL %s: Status %s | Snippet: %s", linkedin_url, response.status_code if response else "None", response.text[:200] if response else "No response")
                 return None
-        return None
+        else:
+            return None
 
     # Check if response has content
     if response is None or not response.text.strip():
@@ -790,7 +822,10 @@ def process_profiles_aviato(max_profiles=10):
         
         # Skip if API call failed
         if result is None:
-            logger.warning("Skipping profile due to API error: %s", url)
+            logger.debug("Skipping profile due to API error: %s", url)
+            # Add to already_scraped_urls to prevent retrying 404s
+            already_scraped_urls.append(url)
+            already_scraped_urls.append(url_cleaned)
             continue
         
         mapped = map_aviato_to_schema(result)
@@ -1447,6 +1482,8 @@ def filter_relevant(companies):
     return relevant
 
 def find_founder(company_id):
+    # Respect dedicated RPM for founders endpoint
+    _wait_for_founder_rate_limit()
 
     url = "https://data.api.aviato.co/company/" + company_id + "/founders?perPage=1&page=1"
 
@@ -1454,13 +1491,26 @@ def find_founder(company_id):
         "Authorization": f"Bearer {aviato_api}"
     }
 
-    response = requests.get(url, headers=headers)
+    response = request_with_backoff(
+        "GET",
+        url,
+        headers=headers,
+    )
+
+    if response is None:
+        logger.error("Find founder error: No response for company %s", company_id)
+        return None
 
     if response.status_code == 200:
-        data = response.json()
-        return data
+        try:
+            data = response.json()
+            return data
+        except (ValueError, requests.exceptions.JSONDecodeError) as e:
+            logger.error("Find founder JSON decode error for %s: %s | Snippet: %s", company_id, e, response.text[:200])
+            return None
     else:
         logger.error("Find founder error: %s | %s", response.status_code, response.text[:200])
+        return None
 
 def aviato_search_collect(search_filters, source="aviato_search"):
     """
