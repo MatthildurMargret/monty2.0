@@ -90,8 +90,8 @@ class MontyApp:
     
     def schedule_cron_jobs(self):
         """Schedule the cron jobs"""
-        # Schedule aviato processing to run daily at 2 AM PDT (9 AM UTC)
-        schedule.every().day.at("09:00").do(self.run_aviato_processing)
+        # Schedule aviato processing to run daily at 6 AM PDT (13:00 UTC)
+        schedule.every().day.at("13:00").do(self.run_aviato_processing)
         
         # Schedule discovery to run daily at 10 PM PDT (5 AM UTC next day)
         schedule.every().day.at("05:00").do(self.run_discovery)

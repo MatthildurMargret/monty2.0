@@ -8,7 +8,7 @@
           "country": "United States",
           "industryList": ["Healthcare", "Health Care"],
           "totalFunding": 5000000,
-          "founded": 2021
+          "founded": 2024
         }
       },
       {
@@ -19,7 +19,7 @@
           "country": "United States",
           "industryList": ["Biotechnology"],
           "totalFunding": 5000000,
-          "founded": 2021
+          "founded": 2024
         }
       },
       {
@@ -30,7 +30,7 @@
           "country": "United States",
           "industryList": ["Genetics"],
           "totalFunding": 5000000,
-          "founded": 2021
+          "founded": 2024
         }
       },
       {
@@ -41,7 +41,7 @@
           "country": "United States",
           "industryList": ["Pharmaceuticals"],
           "totalFunding": 5000000,
-          "founded": 2021
+          "founded": 2024
         }
       },
       {
@@ -52,7 +52,7 @@
           "country": "United States",
           "industryList": ["Digital Health"],
           "totalFunding": 5000000,
-          "founded": 2021
+          "founded": 2024
         }
       },
       {
@@ -63,7 +63,7 @@
           "country": "United States",
           "industryList": ["Beauty", "Fitness", "Personal Health", "Wellness"],
           "totalFunding": 5000000,
-          "founded": 2021
+          "founded": 2024
         }
       },
       {
@@ -74,7 +74,7 @@
           "country": "United States",
           "industryList": ["Health Information Technology"],
           "totalFunding": 5000000,
-          "founded": 2021
+          "founded": 2024
         }
       },
       {
@@ -85,7 +85,7 @@
           "country": "United States",
           "industryList": ["Medical"],
           "totalFunding": 5000000,
-          "founded": 2021
+          "founded": 2024
         }
       },
       {
@@ -96,7 +96,7 @@
           "country": "United States",
           "industryList": ["Health Diagnostics"],
           "totalFunding": 5000000,
-          "founded": 2021
+          "founded": 2024
         }
       }
     ]

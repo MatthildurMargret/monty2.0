@@ -8,7 +8,7 @@
           "country": "United States",
           "industryList": ["Software"],
           "totalFunding": 5000000,
-          "founded": 2021
+          "founded": 2024
         }
       },
       {
@@ -19,7 +19,7 @@
           "country": "United States",
           "industryList": ["Information Technology"],
           "totalFunding": 5000000,
-          "founded": 2021
+          "founded": 2024
         }
       },
       {
@@ -30,7 +30,7 @@
           "country": "United States",
           "industryList": ["Artificial Intelligence (AI)"],
           "totalFunding": 5000000,
-          "founded": 2021
+          "founded": 2024
         }
       },
       {
@@ -41,7 +41,7 @@
           "country": "United States",
           "industryList": ["SaaS"],
           "totalFunding": 5000000,
-          "founded": 2021
+          "founded": 2024
         }
       },
       {
@@ -52,7 +52,7 @@
           "country": "United States",
           "industryList": ["Construction", "Property Management", "Buildings and Property", "Building Material", "Construction and Engineering"],
           "totalFunding": 5000000,
-          "founded": 2021
+          "founded": 2024
         }
       },
       {
@@ -63,7 +63,7 @@
           "country": "United States",
           "industryList": ["Architecture", "Architecture and Planning", "Interior Design"],
           "totalFunding": 5000000,
-          "founded": 2021
+          "founded": 2024
         }
       },
       {
@@ -74,7 +74,7 @@
           "country": "United States",
           "industryList": ["Technology, Information and Internet", "Media and Information Services (B2B)"],
           "totalFunding": 5000000,
-          "founded": 2021
+          "founded": 2024
         }
       }
     ]
