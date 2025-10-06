@@ -818,3 +818,36 @@ def cleanup_search_list():
     conn.close()
     
     return total_remaining, total_removed
+
+def get_founders_by_path(path):
+    """
+    Get founders by tree path. Supports both full paths and partial paths.
+    
+    Args:
+        path: Can be a full path like "Fintech > AI-Enabled Payment Solutions" 
+              or a partial path like "AI-Enabled Payment Solutions"
+    """
+    conn = get_db_connection()
+    if not conn:
+        return []
+    
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT * FROM founders WHERE (tree_result = 'Strong recommend' OR tree_result = 'Recommend') AND history = '' AND tree_path LIKE %s", 
+            ("%" + path + "%",)
+        )
+        rows = cursor.fetchall()
+        column_names = [desc[0] for desc in cursor.description]
+        
+        # Convert to list of dictionaries for easier DataFrame creation
+        founders = [dict(zip(column_names, row)) for row in rows]
+        return founders
+    except Exception as e:
+        print(f"Error fetching founders by path: {e}")
+        return []
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()

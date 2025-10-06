@@ -131,3 +131,73 @@ def parse_raw_email(email):
     soup = BeautifulSoup(text_content, 'html.parser')
     text = soup.get_text(separator="\n")
     return text
+
+def send_html_email(to, subject, message_text):
+    """
+    Send an email using the Gmail API.
+    
+    Args:
+        to (str or list): Email address(es) of the recipient(s). Can be a single email string or a list of email addresses.
+        subject (str): Subject of the email
+        message_text (str): Body of the email (can include HTML)
+        
+    Returns:
+        dict: The sent message if successful
+    """
+    import base64
+    from email.mime.text import MIMEText
+    
+    # Authenticate and build the Gmail service
+    creds = authenticate_gmail()
+    service = build('gmail', 'v1', credentials=creds)
+    
+    message = MIMEText(message_text, 'html')
+    
+    # Handle both single email and list of emails
+    if isinstance(to, list):
+        message['to'] = ', '.join(to)
+    else:
+        message['to'] = to
+        
+    message['subject'] = subject
+    
+    # Encode the message
+    raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode('utf-8')
+    
+    try:
+        sent_message = service.users().messages().send(
+            userId='me',
+            body={'raw': raw_message}
+        ).execute()
+        print(f"Email sent to {to} with message ID: {sent_message['id']}")
+        return sent_message
+    except Exception as e:
+        print(f"An error occurred while sending the email: {e}")
+        return None
+
+
+def send_email(html_content):
+    """
+    Send the weekly summary email with top founders and pre-seed deals.
+    """
+    try:
+        # Set up email parameters
+        to_addresses = ['matthildur@montageventures.com', 'nia@montageventures.com', 'connie@montageventures.com',
+                'daphne@montageventures.com', 'matt@montageventures.com', 'todd@montageventures.com']
+        #to_addresses = ['matthildur@montageventures.com']
+        subject = f"Monty's Weekly Update - {datetime.now().strftime('%B %d, %Y')}"
+        
+        # Send the email
+        print(f"Sending email to {to_addresses}...")
+        result = send_html_email(to_addresses, subject, html_content)
+        
+        if result:
+            print("✅ Email sent successfully!")
+            return True
+        else:
+            print("❌ Failed to send email")
+            return False
+            
+    except Exception as e:
+        print(f"❌ Error sending email: {e}")
+        return False

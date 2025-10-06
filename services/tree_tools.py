@@ -1,4 +1,6 @@
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
+import re
+from datetime import datetime
 
 def find_nodes_by_name(root_node, name):
     """
@@ -137,6 +139,99 @@ def list_all_nodes(root_node):
     
     _walk(root_node)
     return all_nodes
+
+# New function: find all pipeline companies in the tree
+def find_pipeline_companies(root_node, filter_date: Optional[str] = None) -> List[Dict[str, Any]]:
+    
+    """
+    Traverse the tree and collect all companies listed in any node's pipeline.
+
+    The tree stores pipeline items as a newline-separated string in `node['meta']['pipeline']`.
+    Each line commonly follows patterns like:
+      - "[YYYY-MM-DD] CompanyName, Description, Tags | Status: Qualifying"
+      - "CompanyName, Description"
+
+    This function parses those lines into structured entries and returns a list of:
+      {
+        'company_name': str,
+        'description': str,
+        'status': str,
+        'date': str,
+        'raw': str,            # the original pipeline line
+        'node': str,           # node name
+        'path': str            # full path e.g. "Commerce > Retail & consumer"
+      }
+    """
+
+    results: List[Dict[str, Any]] = []
+
+    def parse_pipeline_line(line: str) -> Optional[Dict[str, Any]]:
+        data: Dict[str, Any] = {
+            'date': '',
+            'company_name': '',
+            'description': '',
+            'status': '',
+            'raw': line,
+        }
+
+        s = (line or '').strip()
+        if not s:
+            return None
+
+        # Extract optional [date]
+        m = re.match(r"^\[(?P<date>[^\]]+)\]\s*(?P<rest>.*)$", s)
+        if m:
+            data['date'] = (m.group('date') or '').strip()
+            s = (m.group('rest') or '').strip()
+
+        # Extract optional trailing "| Status: ..."
+        status_match = re.search(r"\|\s*Status\s*:\s*(.+)$", s, flags=re.IGNORECASE)
+        if status_match:
+            data['status'] = status_match.group(1).strip()
+            s = s[: status_match.start()].strip()
+
+        # Split remaining into company_name and description (first comma)
+        if ',' in s:
+            name_part, desc_part = s.split(',', 1)
+            data['company_name'] = name_part.strip()
+            data['description'] = desc_part.strip()
+        else:
+            data['company_name'] = s
+
+        return data
+
+    def _walk(node: Dict[str, Any], path: List[str] = []):
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if key != 'meta' and isinstance(value, dict):
+                    current_path = path + [key]
+
+                    meta = value.get('meta', {}) if isinstance(value.get('meta', {}), dict) else {}
+                    pipeline_str = meta.get('pipeline', '')
+                    if isinstance(pipeline_str, str) and pipeline_str.strip():
+                        for line in pipeline_str.splitlines():
+                            parsed = parse_pipeline_line(line)
+                            if parsed:
+                                results.append({
+                                    'node': current_path[-1],
+                                    'path': ' > '.join(current_path),
+                                    **parsed,
+                                })
+
+                    if 'children' in value:
+                        _walk(value['children'], current_path)
+
+    _walk(root_node)
+
+    if filter_date:
+        cutoff = datetime.fromisoformat(filter_date).date()
+        results = [
+            r for r in results
+            if r['date'] and datetime.fromisoformat(r['date']).date() >= cutoff
+        ]
+    return results
+
+
 
 # Test functions (uncomment to run manually)
 # if __name__ == "__main__":

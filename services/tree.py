@@ -308,6 +308,8 @@ The AI classification system traversed through our investment framework as follo
 **DECISION PATH:**
 {path_text}
 
+Note that if the investment discussion contains areas that we are tracking, that means we are interested in this space.
+
 {final_emphasis}
 
 Here is information about the founder:
@@ -325,12 +327,12 @@ Compare the company description to the context associated with the space and onl
 Important to remember: 
 In all cases, we are only interested in early stage startups with presence in the US, especially in SF Bay Area or California. 
 They have to be venture backable - not studios, agencies, consulting firms, etc. 
-They should be less than 3 years old - so starting in 2022 or later, and we're less interested if they've already raised over $5M. The earlier the better!
+They should be less than 3 years old - so starting in 2022 or later, and we're not interested if they've already raised over $10M. The earlier the better, and definitely not interested if they raised well over $5M. 
 
 Consider:
 1. The investment thesis and interest level, notes at each stage of the path. This is important - if the investment status at each stage is low and then the last node is neutral, it's clearly a space we're not interested in. If there's a lot of "High" along the path but the last node is "Neutral", that still signals strong alignment and maybe it's an interesting new space we haven't seen before.
 2. How well the company aligns with the final category's investment criteria. If there is a thesis name corresponding to the final space in the path, it's a strong indicator of alignment.
-3. The overall investment status progression through the path
+3. The overall investment status progression through the path. 
 4. The founder information: Do they have strong scores, impressive background, any signs that they will lead this company to success? Note that the past success indication score weighs stronger than the industry expertise score, since we are more bullish on founders that are outsiders to the industry and insiders to the problem, meaning that someone with a perfect indsutry experience score might be too established. In fact, an industry score of 10 is not even interesting.
 
 You must make a decision. Choose the most appropriate recommendation based on all available signals, and avoid defaulting to "Neutral" or "Track" unless you have a clear rationale.
@@ -930,11 +932,13 @@ def tree_analysis(profile_dict):
     description = profile_dict['description_1'] or ''
     product = profile_dict['product'] or ''
     market = profile_dict['market'] or ''
+    location = profile_dict['location_1'] or ''
     
     company_text = f"Name: {company_name}" if company_name != '' else ''
     company_text += f"Description: {description}" if description != '' else ''
     company_text += f"Product: {product}" if product != '' else ''
     company_text += f"Market: {market}" if market != '' else ''
+    company_text += f"Funding: {funding}" if funding != '' else ''
     founder_text = get_founder_text(profile_dict)
 
     building_since = profile_dict['building_since'] or ''
@@ -1011,6 +1015,7 @@ def test_tree():
         company_text += f"Description: {description}" if description != '' else ''
         company_text += f"Product: {product}" if product != '' else ''
         company_text += f"Market: {market}" if market != '' else ''
+        company_text += f"Funding: {funding}" if funding != '' else ''
         founder_text = get_founder_text(row)
 
         building_since = row['building_since'] or ''
