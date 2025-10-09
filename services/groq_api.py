@@ -13,7 +13,7 @@ from groq import Groq  # <-- Correct import
 # Load environment variables from .env file
 load_dotenv()
 
-free_models = ["gemma2-9b-it", "llama-3.1-8b-instant", "deepseek-r1-distill-llama-70b", "mistral-saba-24b"]
+free_models = ["openai/gpt-oss-20b", "llama-3.1-8b-instant", "deepseek-r1-distill-llama-70b", "mistral-saba-24b"]
 
 # Module logger
 logger = logging.getLogger("groq_api")
