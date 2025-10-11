@@ -3,6 +3,7 @@ from services.tree_tools import find_pipeline_companies, find_nodes_by_name
 from services.database import get_founders_by_path
 import pandas as pd
 from datetime import datetime, timedelta
+from workflows.recommendations import mark_prev_recs
 
 def get_recent_deals():
     deals = pd.read_csv('data/deal_data/early_deals.csv', quotechar='"')
@@ -37,7 +38,7 @@ def get_tracking():
     return new_updates
 
 # Load the investment tree root node
-def get_pipeline_stats(filter_date="2025-09-01"):
+def get_pipeline_stats(filter_date="2025-09-10"):
     """
     Analyze pipeline companies and return structured statistics.
     
@@ -243,7 +244,7 @@ def get_recs():
             founders = get_founders_by_path(sub['subcategory'])
             if founders:  # Only process if we have founders
                 founders_df = pd.DataFrame(founders)
-                founders_df.sort_values(by='past_success_indication_score', ascending=False, inplace=True)
+                founders_df.sort_values(by='startup_experience_score', ascending=False, inplace=True)
                 top_founder = founders_df.iloc[0].to_dict()  # Convert Series to dict
                 sub['top_founder'] = top_founder  # Add directly to the sub dictionary
             else:
@@ -254,8 +255,52 @@ def get_recs():
             deal_data = get_relevant_deals(sub['subcategory'], tree, filter_date="2025-09-01")
             sub['deal_activity'] = deal_data
 
+            # Also attach 'interest' metadata from the corresponding subcategory node
+            interest_text = ""
+            try:
+                nodes = find_nodes_by_name(tree, sub['subcategory'])
+                for node in nodes:
+                    meta = node.get('meta', {}) if isinstance(node, dict) else {}
+                    interest_val = meta.get('interest', '')
+                    if isinstance(interest_val, str) and interest_val.strip():
+                        interest_text = interest_val.strip()
+                        break
+            except Exception:
+                # If anything fails, leave interest_text as empty
+                pass
+            sub['interest'] = interest_text
+
     return subcategories, pipeline_dict
 
+
+# Collect founders and companies that will be shown in the newsletter's recommendations
+def collect_recommended_entities(recs_dict):
+    names = []
+    companies = []
+    for category, subs in recs_dict.items():
+        if not subs:
+            continue
+        for sub in subs:
+            founders = sub.get("founders", [])
+            founder = founders[0] if founders else sub.get("top_founder")
+            if not founder:
+                continue
+            name = founder.get("name") or founder.get("Name")
+            company = founder.get("company_name") or founder.get("Company")
+            if name:
+                names.append(name)
+            if company:
+                companies.append(company)
+    # Deduplicate
+    return list(dict.fromkeys(names)), list(dict.fromkeys(companies))
+
+def mark_as_recommended(recs):
+    try:
+        rec_names, rec_companies = collect_recommended_entities(recs)
+        if rec_names or rec_companies:
+            mark_prev_recs(names=rec_names, companies=rec_companies)
+    except Exception as e:
+        print(f"Warning: could not mark previous recommendations: {e}")
 
 # Load the tree for deal lookups
 def main():
@@ -275,7 +320,7 @@ def main():
     print(f"Generated recommendations for {len(recs)} categories")
     
     print("\nGenerating HTML email...")
-    greeting_text = "Happy Friday everyone! Excited to share a ton of funding announcements, tracking updates, and a new outline of my sourcing updates for the week. I've been analyzing the companies in the pipeline over the past month and wanted to share companies in similar spaces."
+    greeting_text = "Happy Friday! Another great week in the books for Montage Ventures. In an effort to be more transparent, I'm including more of my reasoning for each of my sourcing picks below. Hope you'll check them out!"
     greeting_text += "\n\nWishing you all a great weekend!\n\n - Monty"
     html_output = generate_html(recent_deals, tracking, recs, pipeline_dict, greeting_text)
     
@@ -289,6 +334,9 @@ def main():
 
     # Send email
     send_email(html_output)
+
+    # Mark recommended founders/companies to avoid repeats
+    mark_as_recommended(recs)
     
     return html_output
 

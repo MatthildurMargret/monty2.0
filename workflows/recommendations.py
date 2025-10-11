@@ -438,7 +438,7 @@ def main():
     # Uncomment the lines below when ready to send to everyone
     print("\n📧 Sending recommendations to all users:")
     print("-" * 60)
-    send_extra_recs(test=False)
+    send_extra_recs(test=True)
     
     print("\n" + "=" * 60)
     print("✅ Done!")

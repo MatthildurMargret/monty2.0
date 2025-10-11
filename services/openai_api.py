@@ -25,6 +25,62 @@ def ask_monty(prompt, data, max_tokens=1000):
     return response.choices[0].message.content
 
 
+def summarize_company_recommendation(interest: str,
+                                     company_description: str,
+                                     company_name: str = None,
+                                     subcategory: str = None,
+                                     max_tokens: int = 140) -> str:
+    """
+    Produce a concise 1–2 sentence newsletter-ready blurb explaining why we're recommending this company
+    by tying the subcategory "interest" notes to the company's description.
+
+    Args:
+        interest: Investment interest text pulled from the taste tree (subcategory meta.interest).
+        company_description: The company's description (product/what they do).
+        company_name: Optional company name for context.
+        subcategory: Optional subcategory name for context.
+        max_tokens: Max tokens for the model output.
+
+    Returns:
+        A short string (1–2 sentences) suitable for inclusion in the newsletter.
+    """
+    # Guard rails and sane defaults
+    interest = (interest or "").strip()
+    company_description = (company_description or "").strip()
+
+    # If no LLM context, fall back to a minimal message
+    if not interest and not company_description:
+        return "This company aligns with areas we’re actively tracking in the pipeline."
+
+    name_part = f"Company: {company_name}\n" if company_name else ""
+    subcat_part = f"Subcategory: {subcategory}\n" if subcategory else ""
+
+    prompt = (
+        "You are a concise VC investment analyst at Montage Ventures. Write a very short blurb (1–2 sentences, max ~45 words) "
+        "explaining why you're suggesting a company for the pipeline at Montage. Tie the rationale explicitly to the context you have on the interest from Montage "
+        "when relevant. Be specific but brief. Avoid marketing fluff, avoid repeating the company description verbatim, "
+        "and do not include headings or bullet points."
+    )
+
+    data = (
+        f"{name_part}{subcat_part}Interest (from internal discussion):\n{interest}\n\n"
+        f"Company Description:\n{company_description}"
+    )
+
+    try:
+        summary = ask_monty(prompt, data, max_tokens=max_tokens)
+        return (summary or "").strip()
+    except Exception:
+        # Graceful fallback if LLM call fails
+        if interest and company_description:
+            return (
+                "This company fits themes we’re tracking in this space and addresses the problems highlighted in our interest notes."
+            )
+        if interest:
+            return "This company reflects areas we’re actively tracking in this subcategory."
+        return "This company aligns with areas we’re actively tracking in the pipeline."
+
+
 def llm_filter_theme_names(company_description, all_themes, top_k=5):
     theme_names = [theme["thesis_name"] for theme in all_themes]
     theme_list_str = "\n".join(f"- {name}" for name in theme_names)

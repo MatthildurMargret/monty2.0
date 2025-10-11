@@ -326,7 +326,7 @@ Important: A past success indication score lower than 7 is not a strong score - 
 Compare the company description to the context associated with the space and only recommend if the company is aligned with the investment criteria.
 Important to remember: 
 In all cases, we are only interested in early stage startups with presence in the US, especially in SF Bay Area or California. 
-They have to be venture backable - not studios, agencies, consulting firms, etc. 
+They have to be venture backable - not studios, agencies, consulting firms, services businesses etc. This is important! There has to be a scalable product with a huge market opportunity. 
 They should be less than 3 years old - so starting in 2022 or later, and we're not interested if they've already raised over $10M. The earlier the better, and definitely not interested if they raised well over $5M. 
 
 Consider:

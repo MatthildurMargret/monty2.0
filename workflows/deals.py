@@ -359,7 +359,7 @@ def reprocess_emails(sources=None, days_back=7):
 
 if __name__ == "__main__":
     # Uncomment the line below to run the regular workflow
-    days_back = 4
+    days_back = 6
     deals = updated_newsletter_deals(days_back=days_back)
     
     early_stage_deals = find_early_stage_deals(deals)
