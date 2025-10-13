@@ -153,6 +153,9 @@ def import_pipeline(ID):
     data = []
 
     for entry in all_entries:
+        # Extract Notion page ID for tracking
+        notion_id = entry.get('id', '')
+        
         # Extract company name
         company_name = entry['properties']['Name']['title'][0]['plain_text'] if entry['properties']['Name'][
             'title'] else "No name"
@@ -182,6 +185,7 @@ def import_pipeline(ID):
     
         # Append as a dictionary to the list
         data.append({
+            "notion_id": notion_id,
             "company_name": company_name,
             "priority": priority,
             "founder": founder,

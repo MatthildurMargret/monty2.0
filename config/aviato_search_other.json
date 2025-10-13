@@ -76,6 +76,160 @@
           "totalFunding": 5000000,
           "founded": 2024
         }
+      },
+      {
+        "name": "manufacturing",
+        "description": "Manufacturing",
+        "source": "Manufacturing Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Manufacturing", "Industrial Manufacturing", "Machinery Manufacturing"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "training",
+        "description": "Training",
+        "source": "Training Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Training", "Professional Training and Coaching", "E-Learning Providers"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "internet",
+        "description": "Internet",
+        "source": "Internet Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Internet"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "web development",
+        "description": "Web Development",
+        "source": "Web Development Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Web Development", "Web Design", "Web Hosting"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "mobile apps",
+        "description": "Mobile Apps",
+        "source": "Mobile Apps Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Apps", "Mobile Apps", "Mobile"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "entertainment",
+        "description": "Entertainment",
+        "source": "Entertainment Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Media and Entertainment", "Entertainment Providers", "Entertainment"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "analytics",
+        "description": "Analytics",
+        "source": "Analytics Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Analytics", "Big Data"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "cybersecurity",
+        "description": "Cybersecurity",
+        "source": "Cybersecurity Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Cyber Security", "Network Security", "Security"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "machine learning",
+        "description": "Machine Learning",
+        "source": "Machine Learning Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Machine Learning"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "iot",
+        "description": "IoT",
+        "source": "IoT Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Internet of Things"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "gaming",
+        "description": "Gaming",
+        "source": "Gaming Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Gaming", "Video Games", "Entertainment Software"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "robotics",
+        "description": "Robotics",
+        "source": "Robotics Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Robotics", "Industrial Automation", "Automation Machinery Manufacturing"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "sustainability",
+        "description": "Sustainability",
+        "source": "Sustainability Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Sustainability", "Environmental Consulting"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "3d printing",
+        "description": "3D Printing",
+        "source": "3D Printing Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["3D Printing"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
       }
     ]
   }

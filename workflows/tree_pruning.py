@@ -1677,10 +1677,27 @@ def update_tree_with_pipeline_companies(tree_json=None, notion_database_id=None,
         print(f"Error loading pipeline from Notion: {e}")
         return tree_json, 0, []
 
+    # Load tracking file to avoid re-processing entries
+    tracking_file = 'data/tracking/processed_pipeline.json'
+    os.makedirs('data/tracking', exist_ok=True)
+    
+    if os.path.exists(tracking_file):
+        with open(tracking_file, 'r') as f:
+            tracking_data = json.load(f)
+            processed_ids = set(tracking_data.get('processed_ids', []))
+    else:
+        processed_ids = set()
+    
+    print(f"Found {len(processed_ids)} previously processed pipeline entries")
+    
+    # Filter out already-processed entries
+    new_df = pipeline_df[~pipeline_df['notion_id'].isin(processed_ids)].copy()
+    print(f"Filtered to {len(new_df)} new/unprocessed companies")
+
     # Filter for rows with required fields
-    valid_df = pipeline_df[
-        (pipeline_df['company_name'].notna()) &
-        (pipeline_df['description'].notna())
+    valid_df = new_df[
+        (new_df['company_name'].notna()) &
+        (new_df['description'].notna())
     ].copy()
 
     if limit is not None:
@@ -1905,8 +1922,10 @@ Respond with just the category name, or "STOP" if the current level is appropria
     # Process each pipeline company
     companies_added = 0
     companies_processed = []
+    newly_processed_ids = []
 
     for idx, row in valid_df.iterrows():
+        notion_id = row.get('notion_id', '')
         name = row.get('company_name')
         description = row.get('description')
         sector = row.get('sector')  # list
@@ -1943,6 +1962,16 @@ Respond with just the category name, or "STOP" if the current level is appropria
                 'priority': priority,
                 'sector': company_info['sector']
             })
+            # Track this ID as processed
+            if notion_id:
+                newly_processed_ids.append(notion_id)
+
+    # Save updated tracking file
+    if newly_processed_ids:
+        processed_ids.update(newly_processed_ids)
+        with open(tracking_file, 'w') as f:
+            json.dump({'processed_ids': list(processed_ids)}, f, indent=2)
+        print(f"\n✓ Updated tracking file with {len(newly_processed_ids)} new IDs")
 
     print(f"\nSuccessfully added {companies_added} pipeline companies to the tree")
     return tree_json, companies_added, companies_processed

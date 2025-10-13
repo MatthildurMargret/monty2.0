@@ -109,6 +109,215 @@
           "totalFunding": 5000000,
           "founded": 2024
         }
+      },
+      {
+        "name": "blockchain",
+        "description": "Blockchain",
+        "source": "Blockchain Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Blockchain", "Cryptocurrency"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "lending",
+        "description": "Lending",
+        "source": "Lending Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Lending", "Credit", "Consumer Lending"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "mortgage",
+        "description": "Mortgage",
+        "source": "Mortgage Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Mortgage", "Commercial Lending"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "credit cards",
+        "description": "Credit Cards",
+        "source": "Credit Cards Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Credit Cards"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "wealth management",
+        "description": "Wealth Management",
+        "source": "Wealth Management Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Wealth Management", "Investment Management"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "trading",
+        "description": "Trading",
+        "source": "Trading Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Trading Platform", "Brokerage"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "venture capital",
+        "description": "Venture Capital",
+        "source": "Venture Capital Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Venture Capital", "Real Estate Investment"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "insurtech",
+        "description": "InsurTech",
+        "source": "InsurTech Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["InsurTech", "Insurance Brokers"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "life insurance",
+        "description": "Life Insurance",
+        "source": "Life Insurance Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Life Insurance", "Health Insurance"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "property insurance",
+        "description": "Property Insurance",
+        "source": "Property Insurance Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Property Insurance", "Auto Insurance", "Commercial Insurance"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "compliance",
+        "description": "Compliance",
+        "source": "Compliance Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Compliance", "Risk Management"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "tax",
+        "description": "Tax",
+        "source": "Tax Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Tax Preparation", "Tax Consulting"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "crowdfunding",
+        "description": "Crowdfunding",
+        "source": "Crowdfunding Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Crowdfunding"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "proptech",
+        "description": "PropTech",
+        "source": "PropTech Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["PropTech"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "personal finance",
+        "description": "Personal Finance",
+        "source": "Personal Finance Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Personal Finance"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "capital markets",
+        "description": "Capital Markets",
+        "source": "Capital Markets Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Capital Markets", "Investment Banking", "Financial Exchanges"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "mobile payments",
+        "description": "Mobile Payments",
+        "source": "Mobile Payments Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Mobile Payments"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "payroll",
+        "description": "Payroll",
+        "source": "Payroll Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Payroll", "Bookkeeping and Payroll"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "debt collections",
+        "description": "Debt Collections",
+        "source": "Debt Collections Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Debt Collections"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
       }
     ]
   }
