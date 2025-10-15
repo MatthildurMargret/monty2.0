@@ -221,7 +221,7 @@
         }
       },
       {
-        "name": "3d printing",
+        "name": "3dprinting",
         "description": "3D Printing",
         "source": "3D Printing Search",
         "filter": {

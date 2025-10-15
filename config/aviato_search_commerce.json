@@ -232,7 +232,7 @@
         }
       },
       {
-        "name": "last mile",
+        "name": "lastmile",
         "description": "Last Mile",
         "source": "Last Mile Search",
         "filter": {

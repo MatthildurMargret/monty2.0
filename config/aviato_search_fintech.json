@@ -309,7 +309,7 @@
         }
       },
       {
-        "name": "debt collections",
+        "name": "debtcollections",
         "description": "Debt Collections",
         "source": "Debt Collections Search",
         "filter": {
