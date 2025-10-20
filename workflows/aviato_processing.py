@@ -1300,8 +1300,12 @@ def search_aviato_companies(search_filters):
     dsl = {
         "offset": 0,
         "limit": 10000,
-        "sort": [{"name": "asc"}]
+        "sort": [{"name": "asc"}]  # Default sort
     }
+    
+    # Optional: custom sort if provided
+    if "sort" in search_filters:
+        dsl["sort"] = search_filters["sort"]
 
     # Optional: add nameQuery if provided
     if "nameQuery" in search_filters:
@@ -1336,24 +1340,47 @@ def search_aviato_companies(search_filters):
     if "twitter" in search_filters:
         filter_conditions.append({"twitter": {"operation": "eq", "value": search_filters["twitter"]}})
     if "totalFunding" in search_filters:
+        # Search for companies with funding <= specified amount (early stage)
         filter_conditions.append({"totalFunding": {"operation": "lte", "value": search_filters["totalFunding"]}})
     if "founded" in search_filters:
         # Handle founded date - convert year to ISO datetime format for comparison
         founded_value = search_filters["founded"]
         if isinstance(founded_value, int):
-            # If it's a year, convert to end of year datetime for "lte" comparison
-            founded_value = f"{founded_value}-12-31T23:59:59Z"
+            # If it's a year, convert to start of year datetime for "gte" comparison
+            founded_value = f"{founded_value}-01-01T00:00:00Z"
         elif isinstance(founded_value, str) and len(founded_value) == 4 and founded_value.isdigit():
-            # If it's a year string, convert to end of year datetime
-            founded_value = f"{founded_value}-12-31T23:59:59Z"
+            # If it's a year string, convert to start of year datetime
+            founded_value = f"{founded_value}-01-01T00:00:00Z"
         
+        # Search for companies founded on or after the specified year (e.g., 2024-01-01 onwards)
         filter_conditions.append({"founded": {"operation": "gte", "value": founded_value}})
+    
+    # Boolean company status fields
+    if "isStealth" in search_filters:
+        filter_conditions.append({"isStealth": {"operation": "eq", "value": search_filters["isStealth"]}})
+    if "isStartup" in search_filters:
+        filter_conditions.append({"isStartup": {"operation": "eq", "value": search_filters["isStartup"]}})
+    
+    # Signals field (likely array or specific value)
+    if "signals" in search_filters:
+        signals_value = search_filters["signals"]
+        if isinstance(signals_value, list):
+            filter_conditions.append({"signals": {"operation": "in", "value": signals_value}})
+        else:
+            filter_conditions.append({"signals": {"operation": "eq", "value": signals_value}})
+    
+    # Latest deal type
+    if "latestDealType" in search_filters:
+        filter_conditions.append({"latestDealType": {"operation": "eq", "value": search_filters["latestDealType"]}})
     
     # Wrap filters in AND structure if any exist
     if filter_conditions:
         dsl["filters"] = [{"AND": filter_conditions}]
 
     payload = {"dsl": dsl}
+    
+    # Debug logging
+    logger.info("Company search payload: %s", payload)
 
     url = "https://data.api.aviato.co/company/search"
 
@@ -1363,6 +1390,7 @@ def search_aviato_companies(search_filters):
     }
 
     response = requests.post(url, headers=headers, json=payload)
+    logger.info("Company search response status: %s", response.status_code)
     if response.status_code == 200:
         data = response.json()
         return data
@@ -1374,8 +1402,12 @@ def search_aviato_profiles(search_filters):
     # Base DSL
     dsl = {
         "offset": 0,
-        "limit": 10
+        "limit": search_filters.get("limit", 10)  # Default to 10, allow override
     }
+    
+    # Optional: custom sort if provided
+    if "sort" in search_filters:
+        dsl["sort"] = search_filters["sort"]
 
     # Optional: add nameQuery if provided
     if "id" in search_filters:
@@ -1384,19 +1416,41 @@ def search_aviato_profiles(search_filters):
         dsl["fullName"] = search_filters["fullName"]
 
     # Build filters dynamically
-    filters = []
+    filter_conditions = []
+    
+    # Location filters
     if "location" in search_filters:
-        filters.append({"location": {"operation": "eq", "value": search_filters["location"]}})
+        filter_conditions.append({"location": {"operation": "eq", "value": search_filters["location"]}})
+    if "country" in search_filters:
+        filter_conditions.append({"country": {"operation": "eq", "value": search_filters["country"]}})
+    if "locality" in search_filters:
+        filter_conditions.append({"locality": {"operation": "eq", "value": search_filters["locality"]}})
+    if "region" in search_filters:
+        filter_conditions.append({"region": {"operation": "eq", "value": search_filters["region"]}})
+    
+    # Social/web filters
     if "website" in search_filters:
-        filters.append({"website": {"operation": "eq", "value": search_filters["website"]}})
+        filter_conditions.append({"website": {"operation": "eq", "value": search_filters["website"]}})
     if "linkedin" in search_filters:
-        filters.append({"linkedin": {"operation": "eq", "value": search_filters["linkedin"]}})
+        filter_conditions.append({"linkedin": {"operation": "eq", "value": search_filters["linkedin"]}})
     if "twitter" in search_filters:
-        filters.append({"twitter": {"operation": "eq", "value": search_filters["twitter"]}})
+        filter_conditions.append({"twitter": {"operation": "eq", "value": search_filters["twitter"]}})
+    
+    # Boolean computed fields (person-specific signals)
+    if "computed_potentialToLeave" in search_filters:
+        filter_conditions.append({"computed_potentialToLeave": {"operation": "eq", "value": search_filters["computed_potentialToLeave"]}})
+    if "computed_likelyToExplore" in search_filters:
+        filter_conditions.append({"computed_likelyToExplore": {"operation": "eq", "value": search_filters["computed_likelyToExplore"]}})
+    if "computed_recentlyLeftCompany" in search_filters:
+        filter_conditions.append({"computed_recentlyLeftCompany": {"operation": "eq", "value": search_filters["computed_recentlyLeftCompany"]}})
+    if "computed_priorBackedFounder" in search_filters:
+        filter_conditions.append({"computed_priorBackedFounder": {"operation": "eq", "value": search_filters["computed_priorBackedFounder"]}})
+    if "computed_oneYearAtCurrentCompany" in search_filters:
+        filter_conditions.append({"computed_oneYearAtCurrentCompany": {"operation": "eq", "value": search_filters["computed_oneYearAtCurrentCompany"]}})
 
-    # Attach filters if any
-    if filters:
-        dsl["filters"] = filters
+    # Wrap filters in AND structure if any exist
+    if filter_conditions:
+        dsl["filters"] = [{"AND": filter_conditions}]
 
     payload = {"dsl": dsl}
 
@@ -1463,22 +1517,122 @@ def enrich_companies(company_ids, chunk_size=100, max_retries=2):
 
     return enriched
 
-def filter_relevant(companies):
-    """Filter out older, well-funded, or irrelevant companies."""
+def enrich_profiles(profile_ids, max_retries=2):
+    """
+    Enrich profiles/people individually using GET requests.
+    Returns a list of enriched profile objects.
+    """
+    import time
+    
+    base_url = "https://data.api.aviato.co/person/enrich"
+    headers = {
+        "Authorization": f"Bearer {aviato_api}",
+    }
+
+    enriched = []
+    
+    # Iterate through profile_ids individually
+    for i, profile_id in enumerate(profile_ids):
+        # Retry logic for 500 errors
+        for attempt in range(max_retries + 1):
+            try:
+                url = f"{base_url}?id={profile_id}"
+                response = requests.get(url, headers=headers, timeout=30)
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    enriched.append(data)
+                    break  # Success, exit retry loop
+                elif response.status_code == 500 and attempt < max_retries:
+                    logger.warning("500 error on profile %d/%d, attempt %d/%d. Retrying in 2 seconds...", 
+                                 i + 1, len(profile_ids), attempt + 1, max_retries + 1)
+                    time.sleep(2)  # Wait before retry
+                    continue
+                else:
+                    logger.warning("Error enriching profile %d/%d (ID: %s): %s | %s", 
+                                 i + 1, len(profile_ids), profile_id, response.status_code, response.text[:200])
+                    break  # Don't retry for non-500 errors or after max retries
+            except requests.exceptions.RequestException as e:
+                logger.warning("Request exception on profile %d/%d, attempt %d: %s", 
+                             i + 1, len(profile_ids), attempt + 1, str(e))
+                if attempt < max_retries:
+                    time.sleep(2)
+                    continue
+                else:
+                    break
+        
+        # Small delay between requests to avoid rate limiting
+        if i < len(profile_ids) - 1:
+            time.sleep(0.1)
+
+    return enriched
+
+def filter_relevant_profiles(profiles, required_highlights=None, optional_highlights=None):
+    """
+    Filter profiles based on computed highlights.
+    
+    Args:
+        profiles: List of profile objects
+        required_highlights: List of highlights that must ALL be present (AND logic)
+                           Default: ['potentialToLeave', 'priorBackedFounder']
+        optional_highlights: List of highlights where at least ONE must be present (OR logic)
+                           Default: ['bigTechAlumPrivate', 'bigTechAlumPublic']
+    
+    Returns:
+        List of filtered profiles
+    """
+    if required_highlights is None:
+        required_highlights = ['potentialToLeave', 'priorBackedFounder']
+    
+    if optional_highlights is None:
+        optional_highlights = ['bigTechAlumPrivate', 'bigTechAlumPublic']
+    
     relevant = []
+    filtered_out = 0
+    
+    for profile in profiles:
+        highlights = profile.get('computed_highlightList', [])
+        
+        # Check if profile has ALL required highlights (AND)
+        has_all_required = all(highlight in highlights for highlight in required_highlights)
+        
+        # Check if profile has at least ONE optional highlight (OR)
+        has_any_optional = any(highlight in highlights for highlight in optional_highlights) if optional_highlights else True
+        
+        # Profile must satisfy both conditions
+        if has_all_required and has_any_optional:
+            relevant.append(profile)
+        else:
+            filtered_out += 1
+    
+    logger.info("Filtered profiles: %d relevant, %d filtered out", len(relevant), filtered_out)
+    return relevant
+
+def filter_relevant(companies):
+    """Filter out acquired, shut down, or irrelevant companies."""
+    relevant = []
+    filtered_out = {"unsuccessful_lookup": 0, "acquired": 0, "shut_down": 0}
+    
     for c in companies:
         if not c.get("lookupSuccessful"):
+            filtered_out["unsuccessful_lookup"] += 1
             continue
         co = c["company"]
-        # Sample rules — tweak as you like
-        if co.get("isAcquired") or co.get("isShutDown"):
+        
+        # Only filter out acquired or shut down companies
+        # (founded date and funding filters are already applied in the API search)
+        if co.get("isAcquired"):
+            filtered_out["acquired"] += 1
             continue
-        if co.get("founded") and int(co["founded"][:4]) < 2021:
-            continue
-        if co.get("totalFunding") and co["totalFunding"] > 5000000:  # too late stage
+        if co.get("isShutDown"):
+            filtered_out["shut_down"] += 1
             continue
 
         relevant.append(co)
+    
+    logger.info("Filtered companies: %d relevant, %d unsuccessful lookup, %d acquired, %d shut down", 
+                len(relevant), filtered_out["unsuccessful_lookup"], 
+                filtered_out["acquired"], filtered_out["shut_down"])
     return relevant
 
 def find_founder(company_id):
@@ -1625,33 +1779,49 @@ def aviato_search(search_filters, source="aviato_search"):
 def aviato_discover():
     import json
     total_inserted = 0
+    total_searches = 0
     file_paths = ["config/aviato_search_fintech.json", "config/aviato_search_healthcare.json", "config/aviato_search_commerce.json", "config/aviato_search_other.json"]
 
     for file_path in file_paths:
-        with open(file_path, "r") as f:
-            data = json.load(f)
-            for search_config in data.get("search_filters", []):
-                search_name = search_config.get("name", "unknown")
-                logger.info("Starting search: %s", search_name)
+        try:
+            logger.info("Loading search config from: %s", file_path)
+            with open(file_path, "r") as f:
+                data = json.load(f)
+                search_filters = data.get("search_filters", [])
+                logger.info("Found %d searches in %s", len(search_filters), file_path)
                 
-                # Collect founder data for this search
-                founder_data = aviato_search_collect(search_config.get("filter", {}), search_config.get("source", "aviato_search"))
-                
-                if founder_data:
-                    # Convert to DataFrame and insert immediately
-                    df = pd.DataFrame(founder_data)
-                    logger.info("Inserting %d founders from %s search", len(df), search_name)
+                for search_config in search_filters:
+                    total_searches += 1
+                    search_name = search_config.get("name", "unknown")
+                    logger.info("[%d] Starting search: %s", total_searches, search_name)
                     
-                    success = insert_search_results(df, table_name="search_list")
-                    if success:
-                        total_inserted += len(df)
-                        logger.info("Successfully inserted %d founders from %s. Total so far: %d", len(df), search_name, total_inserted)
-                    else:
-                        logger.error("Failed to insert founder data from %s search", search_name)
-                else:
-                    logger.info("No founder data collected from %s search", search_name)
-        
-        logger.info("Discovery complete. Total founders inserted: %d", total_inserted)
+                    try:
+                        # Collect founder data for this search
+                        founder_data = aviato_search_collect(search_config.get("filter", {}), search_config.get("source", "aviato_search"))
+                        
+                        if founder_data:
+                            # Convert to DataFrame and insert immediately
+                            df = pd.DataFrame(founder_data)
+                            logger.info("Inserting %d founders from %s search", len(df), search_name)
+                            
+                            success = insert_search_results(df, table_name="search_list")
+                            if success:
+                                total_inserted += len(df)
+                                logger.info("Successfully inserted %d founders from %s. Total so far: %d", len(df), search_name, total_inserted)
+                            else:
+                                logger.error("Failed to insert founder data from %s search", search_name)
+                        else:
+                            logger.info("No founder data collected from %s search", search_name)
+                    except Exception as e:
+                        logger.error("Error processing search %s: %s", search_name, e, exc_info=True)
+                        continue
+                        
+                logger.info("Completed file %s", file_path)
+        except Exception as e:
+            logger.error("Error loading config file %s: %s", file_path, e, exc_info=True)
+            continue
+    
+    logger.info("Discovery complete. Processed %d total searches. Total founders inserted: %d", total_searches, total_inserted)
     
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Aviato processing pipeline")

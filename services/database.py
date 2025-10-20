@@ -819,30 +819,213 @@ def cleanup_search_list():
     
     return total_remaining, total_removed
 
-def get_founders_by_path(path):
+def get_founders_by_path(path, max_years_experience=20):
     """
-    Get founders by tree path. Supports both full paths and partial paths.
+    Get high-quality founders by tree path with filters for caliber and age.
+    
+    Uses hardcoded lists of impressive companies and schools to filter for quality.
     
     Args:
         path: Can be a full path like "Fintech > AI-Enabled Payment Solutions" 
               or a partial path like "AI-Enabled Payment Solutions"
+        max_years_experience: Maximum years of experience (filters out older profiles)
+    
+    Filters applied:
+        - tree_result must be 'Strong recommend' or 'Recommend'
+        - history must be empty (not previously recommended)
+        - years_of_experience <= max_years_experience (not too senior/old)
+        - Must have worked at impressive companies OR attended impressive schools
     """
+    # Hardcoded list of impressive companies
+    IMPRESSIVE_COMPANIES = [
+        # FAANG + Big Tech
+        'Google', 'Meta', 'Facebook', 'Amazon', 'Apple', 'Microsoft', 'Netflix', 
+        # Top Tech Companies
+        'Stripe', 'Airbnb', 'Uber', 'Lyft', 'DoorDash', 'Instacart', 'Coinbase',
+        'Square', 'Block', 'Robinhood', 'Plaid', 'Affirm', 'Chime', 'Brex',
+        # Enterprise/Cloud
+        'Salesforce', 'Oracle', 'SAP', 'Workday', 'ServiceNow', 'Snowflake',
+        'Databricks', 'Palantir', 'Atlassian', 'Twilio', 'Segment',
+        # E-commerce/Marketplace
+        'Shopify', 'Etsy', 'eBay', 'Wayfair', 'Faire', 'Flexport',
+        # Fintech
+        'PayPal', 'Venmo', 'Adyen', 'Klarna', 'Revolut', 'Nubank', 'Wise',
+        # Healthcare/Biotech
+        'Oscar Health', 'Ro', 'Hims', 'One Medical', '23andMe', 'Tempus', 'Ginkgo Bioworks',
+        # Other Notable
+        'SpaceX', 'Tesla', 'OpenAI', 'Anthropic', 'Cruise', 'Waymo', 'Figma',
+        'Notion', 'Slack', 'Dropbox', 'Box', 'Zoom', 'Cloudflare', 'MongoDB',
+        'Reddit', 'Pinterest', 'Snap', 'Twitter', 'LinkedIn', 'GitHub'
+    ]
+    
+    # Hardcoded list of impressive schools
+    IMPRESSIVE_SCHOOLS = [
+        # Ivy League
+        'Harvard', 'Yale', 'Princeton', 'Columbia', 'Penn', 'UPenn', 'University of Pennsylvania',
+        'Brown', 'Dartmouth', 'Cornell',
+        # Top Tech Schools
+        'MIT', 'Stanford', 'Caltech', 'Carnegie Mellon', 'CMU', 'UC Berkeley', 'Berkeley',
+        'Georgia Tech', 'UIUC', 'University of Illinois',
+        # Other Top Universities
+        'University of Michigan', 'UT Austin', 'University of Texas', 'UCLA', 'USC',
+        'University of Washington', 'Duke', 'Northwestern', 'University of Chicago',
+        'NYU', 'Boston University', 'Tufts',
+        # International
+        'Oxford', 'Cambridge', 'Imperial College', 'ETH Zurich', 'NUS', 'IIT'
+    ]
+    
     conn = get_db_connection()
     if not conn:
         return []
     
     try:
         cursor = conn.cursor()
+        # First get all candidates that match basic criteria
+        # We'll do the impressive company/school filtering in Python
         cursor.execute(
-            "SELECT * FROM founders WHERE (tree_result = 'Strong recommend' OR tree_result = 'Recommend') AND history = '' AND tree_path LIKE %s", 
+            """
+            SELECT * FROM founders 
+            WHERE (tree_result = 'Strong recommend' OR tree_result = 'Recommend' OR tree_result = 'Track') 
+            AND history = '' 
+            AND tree_path LIKE %s
+            """, 
             ("%" + path + "%",)
         )
         rows = cursor.fetchall()
         column_names = [desc[0] for desc in cursor.description]
         
-        # Convert to list of dictionaries for easier DataFrame creation
-        founders = [dict(zip(column_names, row)) for row in rows]
-        return founders
+        # Convert to list of dictionaries
+        all_founders = [dict(zip(column_names, row)) for row in rows]
+        
+        # Filter by years of experience and impressive background
+        filtered_founders = []
+        for founder in all_founders:
+            # Check years of experience
+            try:
+                yoe = founder.get('years_of_experience', '')
+                if yoe and str(yoe).lower() not in ['nan', 'none', '']:
+                    yoe_int = int(float(yoe))
+                    if yoe_int > max_years_experience:
+                        continue
+            except (ValueError, TypeError):
+                # If we can't parse years of experience, skip this filter
+                pass
+            
+            # Check for impressive companies in RECENT roles using all_experiences
+            has_recent_impressive_company = False
+            all_experiences = founder.get('all_experiences', [])
+            
+            if all_experiences and isinstance(all_experiences, list):
+                # Sort by end_date (most recent first), handle None/null dates
+                sorted_experiences = sorted(
+                    all_experiences,
+                    key=lambda x: x.get('end_date') or '9999-12-31',  # Put ongoing roles first
+                    reverse=True
+                )
+                
+                # Check first 3 most recent experiences
+                for exp in sorted_experiences[:3]:
+                    company_name = str(exp.get('company_name', '')).lower()
+                    description = str(exp.get('description', '')).lower()
+                    position = str(exp.get('position', '')).lower()
+                    
+                    # Skip education entries (MBA, Student, etc.)
+                    if any(edu_keyword in position for edu_keyword in ['mba', 'student', 'graduate', 'undergraduate']):
+                        continue
+                    
+                    # Check if any impressive company appears in recent experience
+                    # Use word boundaries to avoid false positives (e.g., "Ro" in "Revenew")
+                    import re
+                    for imp_company in IMPRESSIVE_COMPANIES:
+                        # Create pattern with word boundaries
+                        pattern = r'\b' + re.escape(imp_company.lower()) + r'\b'
+                        if re.search(pattern, company_name):
+                            has_recent_impressive_company = True
+                            break
+                    
+                    if has_recent_impressive_company:
+                        break
+            
+            # Fallback to old fields if all_experiences is not available
+            if not has_recent_impressive_company and not all_experiences:
+                for i in range(1, 4):  # Check description_1, description_2, description_3
+                    company_field = f'company_{i}'
+                    
+                    company = str(founder.get(company_field, '')).lower()
+                    
+                    # Check if any impressive company appears in recent experience
+                    if any(imp_company.lower() in company 
+                           for imp_company in IMPRESSIVE_COMPANIES):
+                        has_recent_impressive_company = True
+                        break
+            
+            # Check graduation date - exclude if graduated >15 years ago
+            # UNLESS they have recent impressive company experience
+            from datetime import datetime
+            current_year = datetime.now().year
+            should_skip_old_grad = False
+            
+            if not has_recent_impressive_company:
+                # Only check graduation date if they don't have recent impressive experience
+                for i in range(1, 4):  # Check school_name_1, school_name_2, school_name_3
+                    grad_year_field = f'grad_year_{i}'
+                    grad_year = founder.get(grad_year_field, '')
+                    if grad_year and str(grad_year).lower() not in ['nan', 'none', '']:
+                        try:
+                            grad_year_int = int(float(grad_year))
+                            years_since_grad = current_year - grad_year_int
+                            if years_since_grad > 15:
+                                should_skip_old_grad = True
+                                break
+                        except (ValueError, TypeError):
+                            pass
+            
+            if should_skip_old_grad:
+                continue
+            
+            # DO NOT use company_tags as fallback - it's not reliable for recent experience
+            # Company tags may include old companies from 10+ years ago
+            
+            # Check for impressive schools (still useful for quality signal)
+            school_tags = str(founder.get('school_tags', '')).lower()
+            has_impressive_school = any(school.lower() in school_tags for school in IMPRESSIVE_SCHOOLS)
+            
+            # Must have recent impressive company OR impressive school (but not old grads)
+            if not has_recent_impressive_company and not has_impressive_school:
+                continue
+            
+            # Location filter: Must be based in the US (preferably CA or NY)
+            location = str(founder.get('location', '')).lower()
+            
+            # Skip if location is None, empty, or "none"
+            if not location or location in ['none', 'nan', '']:
+                continue
+            
+            # Check if location contains US states or "united states"
+            us_indicators = [
+                'united states', 'usa', 'u.s.', 
+                # Major US states
+                'california', 'ca', 'new york', 'ny', 'texas', 'tx', 'massachusetts', 'ma',
+                'washington', 'wa', 'florida', 'fl', 'illinois', 'il', 'colorado', 'co',
+                'georgia', 'ga', 'pennsylvania', 'pa', 'north carolina', 'nc', 'virginia', 'va',
+                'nevada', 'nv', 'oregon', 'or', 'arizona', 'az', 'utah', 'ut', 'tennessee', 'tn',
+                # Major US cities
+                'san francisco', 'palo alto', 'mountain view', 'menlo park', 'sunnyvale', 'santa clara',
+                'los angeles', 'san diego', 'new york city', 'nyc', 'brooklyn', 'manhattan',
+                'boston', 'cambridge', 'seattle', 'austin', 'chicago', 'miami', 'atlanta', 'denver',
+                'portland', 'las vegas', 'phoenix', 'salt lake city', 'nashville', 'raleigh', 'durham'
+            ]
+            
+            # Check if location contains any US indicator
+            is_us_based = any(indicator in location for indicator in us_indicators)
+            
+            if not is_us_based:
+                continue
+            
+            filtered_founders.append(founder)
+        
+        return filtered_founders
+        
     except Exception as e:
         print(f"Error fetching founders by path: {e}")
         return []

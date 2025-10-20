@@ -152,6 +152,11 @@ class MontySlackBot:
     async def handle_message(self, event):
         """Handle incoming messages using OpenAI Agent with conversation context"""
         try:
+            # Skip if this is a bot message (no user field)
+            if "user" not in event:
+                logger.debug("Skipping message without user field (likely bot message)")
+                return
+            
             channel = event["channel"]
             text = event.get("text", "")
             user = event["user"]

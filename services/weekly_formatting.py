@@ -7,7 +7,7 @@ from services.openai_api import summarize_company_recommendation
 
 def generate_html(preseed_df, tracking_df, recs, pipeline_dict,
                   greeting_text=None, commerce_df=None,
-                  healthcare_df=None, fintech_df=None, test=False):
+                  healthcare_df=None, fintech_df=None, profile_recs=None, test=False):
     """
     Generate the complete HTML newsletter.
     Sections:
@@ -33,6 +33,18 @@ def generate_html(preseed_df, tracking_df, recs, pipeline_dict,
             investors = row["Investors"] if (pd.notna(row["Investors"]) and
                                              str(row["Investors"]).lower() not in ["undisclosed", "unknown", "nan"]) else ""
             investors = re.sub(r"^\((.*)\)$", r"\1", investors).strip()
+            
+            # Clean up list formatting if present: ['A', 'B'] -> A, B
+            if investors:
+                # Try to parse as Python list
+                try:
+                    if investors.startswith('[') and investors.endswith(']'):
+                        investors_list = ast.literal_eval(investors)
+                        investors = ', '.join(investors_list)
+                except:
+                    # If parsing fails, use regex to clean up
+                    investors = re.sub(r"[\[\]']", "", investors)  # Remove brackets and quotes
+                    investors = re.sub(r',\s*', ', ', investors)  # Normalize spacing
             vertical = row["Vertical"] if row["Vertical"] != "Unknown" else ""
             link = row["Link"] if row["Link"] != "No link found" else ""
             founders = row["Founders"] if pd.notna(row["Founders"]) else ""
@@ -249,15 +261,15 @@ def generate_html(preseed_df, tracking_df, recs, pipeline_dict,
         filter_date = pipeline_dict.get('filter_date', '')
         totals_line = f"<small>Total companies analyzed since {filter_date}: {total_companies}</small>" if total_companies else ""
 
-        insights_html = "<div class='section'><h3>Pipeline Insights</h3>"
+        insights_html = "<div class='section'><h3>Sourcing results</h3>"
         insights_html += f"""
         <div class="summary-box">
         <h4>This month’s hottest verticals in the pipeline are:</h4>
         <p>{hot_list}</p>
         </div>
         """
-        insights_html += "<p>Now let's go over the rest of the main verticals in the pipeline. </p>"
-        category_order = ["FinTech", "Commerce", "Healthcare", "AI"]
+        insights_html += "<p>Now let's go over some aligned companies I've found over the week. </p>"
+        category_order = ["Fintech", "Commerce", "Healthcare", "AI"]
         seen_founders = set()  # Track unique founders across all categories
 
         for category in category_order:
@@ -379,6 +391,133 @@ def generate_html(preseed_df, tracking_df, recs, pipeline_dict,
     deals_html = format_preseeds(preseed_df)
     tracking_html = format_tracking(tracking_df)
     recs_html = format_recs_insights(recs, pipeline_dict)
+    
+    # Profile recommendations section
+    def format_profile_recs(profiles):
+        """Format profile recommendations to match founder card style."""
+        if not profiles:
+            return ""
+        
+        def fix_url(url):
+            """Ensure URL has proper protocol prefix."""
+            if not url or url == '#' or pd.isna(url):
+                return '#'
+            if not url.startswith('http'):
+                return f"https://{url}"
+            return url
+        
+        def format_highlight_tags(highlights):
+            """Convert highlights to styled tags."""
+            if not highlights:
+                return ""
+            
+            highlight_labels = {
+                'potentialToLeave': 'Open to opportunities',
+                'priorBackedFounder': 'Prior VC-backed founder',
+                'bigTechAlumPublic': 'Big Tech (Public)',
+                'bigTechAlumPrivate': 'Big Tech (Private)',
+                'employeeDuringIPO': 'IPO Experience',
+                'unicornEarlyEngineer': 'Early Unicorn Engineer',
+                'topUniversity': 'Top University',
+                'employeeDuringMA': 'M&A Experience'
+            }
+            
+            tags_html = ""
+            for highlight in highlights:
+                if highlight in highlight_labels:
+                    tags_html += f"<span class='tag-founder'>{highlight_labels[highlight]}</span>"
+            return tags_html
+        
+        def build_why_explanation(highlights):
+            """Build human-readable explanation of why we're recommending."""
+            reasons = []
+            
+            if 'potentialToLeave' in highlights:
+                reasons.append("showing signs of being open to new opportunities")
+            if 'priorBackedFounder' in highlights:
+                reasons.append("previously founded a VC-backed company")
+            if 'bigTechAlumPublic' in highlights:
+                reasons.append("worked at a major public tech company")
+            elif 'bigTechAlumPrivate' in highlights:
+                reasons.append("worked at a major private tech company")
+            if 'employeeDuringIPO' in highlights:
+                reasons.append("experienced an IPO")
+            if 'unicornEarlyEngineer' in highlights:
+                reasons.append("early engineer at a unicorn")
+            if 'topUniversity' in highlights:
+                reasons.append("attended a top university")
+            
+            return ", ".join(reasons) if reasons else "strong background and signals"
+        
+        profiles_html = "<div class='cards-container'>"
+        
+        for profile in profiles:
+            name = profile.get('fullName', 'Unknown')
+            headline = profile.get('headline', 'No headline available')
+            location = profile.get('location', 'Location not specified')
+            
+            # Clean location (just city/state)
+            if location and location != 'Location not specified':
+                location_parts = location.split(',')
+                if len(location_parts) >= 2:
+                    location = f"Based in {location_parts[0].strip()}"
+                else:
+                    location = f"Based in {location}"
+            else:
+                location = ""
+            
+            # Get LinkedIn URL
+            urls = profile.get('URLs', {})
+            linkedin_url = urls.get('linkedin', '')
+            profile_url = fix_url(linkedin_url)
+            
+            # Get highlights
+            highlights = profile.get('computed_highlightList', [])
+            tags_html = format_highlight_tags(highlights)
+            
+            # Check if AI provided reasoning
+            ai_reason = profile.get('ai_reason', '')
+            ai_vertical = profile.get('ai_vertical', '')
+            
+            if ai_reason:
+                # Use AI reasoning - this replaces the computed highlights explanation
+                first_name = name.split()[0] if name else 'this person'
+                why_text = f"<strong>Why {first_name}?</strong> {ai_reason}"
+            else:
+                # Fallback to highlight-based explanation (shouldn't happen with AI selection)
+                why_text = f"<strong>Why {name.split()[0]}?</strong> {build_why_explanation(highlights).capitalize()}."
+            
+            profiles_html += f"""
+<div class='company-card'>
+    <div class='card-header'>
+        <div class='founder-info'>
+            <strong><a href="{profile_url}" target="_blank" class="link">{name}</a></strong>
+        </div>
+        <div class='description'>
+            <span>{location}</span>
+        </div>
+    </div>
+    <div class='card-tags'>
+        {tags_html}
+    </div>
+    <p class='description'>{headline}</p>
+    <div class='why-box'>
+        {why_text}
+    </div>
+</div>
+"""
+        
+        profiles_html += "</div>"
+        
+        return f"""
+        <div class="section">
+            <h3>🎯 Talent Recommendations</h3>
+            <p style="margin-bottom: 15px; color: #555;">Here are some interesting profiles we came across this week:</p>
+            {profiles_html}
+        </div>
+        """
+    
+    profile_recs_html = format_profile_recs(profile_recs) if profile_recs else ""
 
     email_body = f"""
     <html>
@@ -551,6 +690,8 @@ def generate_html(preseed_df, tracking_df, recs, pipeline_dict,
             <h3>Updates on Tracking</h3>
             <ul>{tracking_html}</ul>
         </div>
+
+        {profile_recs_html}
 
         {recs_html}
 

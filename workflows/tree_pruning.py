@@ -778,7 +778,7 @@ Available ROOT categories:
 CRITICAL INSTRUCTIONS FOR ROOT LEVEL:
 1. You MUST choose from one of the existing root categories shown above.
 2. DO NOT create new categories at the root level.
-3. Pick the best fit from: Commerce, Healthcare, Fintech, Other, AI, or Robotics.
+3. Pick the best fit from: Commerce, Healthcare, Fintech, Other, or AI.
 4. Consider the deal's industry, vertical, and business model as strong indicators.
 5. If unsure, use "Other" as the fallback category.
 
@@ -1360,7 +1360,7 @@ Available ROOT categories:
 CRITICAL INSTRUCTIONS FOR ROOT LEVEL:
 1. You MUST choose from one of the existing root categories shown above.
 2. DO NOT create new categories at the root level.
-3. Pick the best fit from: Commerce, Healthcare, Fintech, Other, AI, or Robotics.
+3. Pick the best fit from: Commerce, Healthcare, Fintech, Other, or AI.
 4. Consider the company's category and sector fields as strong indicators.
 5. If unsure, use "Other" as the fallback category.
 
@@ -1745,7 +1745,7 @@ Available ROOT categories:
 CRITICAL INSTRUCTIONS FOR ROOT LEVEL:
 1. You MUST choose from one of the existing root categories shown above.
 2. DO NOT create new categories at the root level.
-3. Pick the best fit from: Commerce, Healthcare, Fintech, Other, AI, or Robotics.
+3. Pick the best fit from: Commerce, Healthcare, Fintech, Other, or AI.
 4. Consider the sector tags and brief description as strong indicators.
 5. If unsure, use "Other" as the fallback category.
 
@@ -2046,6 +2046,8 @@ def integrate_context_thoughts(tree_json):
     except Exception as e:
         print(f"Error reading context file: {e}")
         return tree_json
+
+
 
 # -------------------
 # Main

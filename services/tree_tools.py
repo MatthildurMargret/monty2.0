@@ -223,6 +223,12 @@ def find_pipeline_companies(root_node, filter_date: Optional[str] = None) -> Lis
 
     _walk(root_node)
 
+    # Filter out companies with "Pass" or "Passed" status
+    results = [
+        r for r in results
+        if r['status'].lower() not in ['pass', 'passed']
+    ]
+
     if filter_date:
         cutoff = datetime.fromisoformat(filter_date).date()
         results = [

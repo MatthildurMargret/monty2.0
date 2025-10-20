@@ -4,6 +4,7 @@ from services.database import get_founders_by_path
 import pandas as pd
 from datetime import datetime, timedelta
 from workflows.recommendations import mark_prev_recs
+from workflows.profile_recommendations import get_profile_recommendations, mark_profiles_as_recommended, format_profiles_for_weekly_update
 
 def get_recent_deals():
     deals = pd.read_csv('data/deal_data/early_deals.csv', quotechar='"')
@@ -302,6 +303,25 @@ def mark_as_recommended(recs):
     except Exception as e:
         print(f"Warning: could not mark previous recommendations: {e}")
 
+def get_profile_recs():
+    """Get profile recommendations for the weekly update.
+    
+    Returns:
+        tuple: (profiles_list, profile_ids_to_mark)
+    """
+    try:
+        profiles = get_profile_recommendations(limit=3)
+        
+        if not profiles:
+            return [], []
+        
+        profile_ids = [p['id'] for p in profiles]
+        
+        return profiles, profile_ids
+    except Exception as e:
+        print(f"Warning: could not get profile recommendations: {e}")
+        return [], []
+
 # Load the tree for deal lookups
 def main():
     from services.weekly_formatting import generate_html
@@ -319,10 +339,18 @@ def main():
     recs, pipeline_dict = get_recs()
     print(f"Generated recommendations for {len(recs)} categories")
     
+    print("\nGetting profile recommendations...")
+    profile_recs, profile_ids = get_profile_recs()
+    if profile_recs:
+        print(f"Found {len(profile_ids)} tracking profile recommendations")
+    else:
+        print("No new tracking profile recommendations available")
+    
     print("\nGenerating HTML email...")
-    greeting_text = "Happy Friday! Another great week in the books for Montage Ventures. In an effort to be more transparent, I'm including more of my reasoning for each of my sourcing picks below. Hope you'll check them out!"
+    greeting_text = "Happy Friday everyone! I'm starting a new segment of the weekly update, highlighting three profiles that were flagged as likely to start a company... "
+    greeting_text += "There were a ton of deals done this week, highlighted below, and I'm very excited about the early stage companies I've sourced for you. Check them out!"
     greeting_text += "\n\nWishing you all a great weekend!\n\n - Monty"
-    html_output = generate_html(recent_deals, tracking, recs, pipeline_dict, greeting_text)
+    html_output = generate_html(recent_deals, tracking, recs, pipeline_dict, greeting_text, profile_recs=profile_recs)
     
     # Save to file
     output_path = 'data/weekly_update_output.html'
@@ -337,6 +365,11 @@ def main():
 
     # Mark recommended founders/companies to avoid repeats
     mark_as_recommended(recs)
+    
+    # Mark recommended profiles to avoid repeats
+    if profile_ids:
+        mark_profiles_as_recommended(profile_ids)
+        print(f"Marked {len(profile_ids)} profiles as recommended")
     
     return html_output
 

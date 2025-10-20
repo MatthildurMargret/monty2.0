@@ -522,6 +522,12 @@ async def api_profile_info(query: str, user_id: str = "slack_user") -> str:
         
         # Parse the JSON response
         linkedin_info = json.loads(criteria_json)
+        if isinstance(linkedin_info, str):
+            linkedin_info = {"linkedin_id": linkedin_info.strip()}
+        elif isinstance(linkedin_info, list) and linkedin_info and isinstance(linkedin_info[0], str):
+            linkedin_info = {"linkedin_id": linkedin_info[0].strip()}
+        elif not isinstance(linkedin_info, dict):
+            return "Please provide a LinkedIn URL or username to get profile information."
         
         if not linkedin_info:
             return "Please provide a LinkedIn URL or username to get profile information."
@@ -628,6 +634,12 @@ async def api_company_info(query: str, user_id: str = "slack_user") -> str:
         
         # Parse the JSON response
         company_info = json.loads(criteria_json)
+        if isinstance(company_info, str):
+            company_info = {"website": company_info.strip()}
+        elif isinstance(company_info, list) and company_info and isinstance(company_info[0], str):
+            company_info = {"website": company_info[0].strip()}
+        elif not isinstance(company_info, dict):
+            return "Please provide a company website or name to get company information."
         
         if not company_info or not company_info.get('website'):
             return "Please provide a company website or name to get company information."
