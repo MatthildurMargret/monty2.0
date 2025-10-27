@@ -52,10 +52,11 @@ def setup_logging(level: Optional[str] = None):
 # ---- Aviato rate limiting and retry/backoff utilities ----
 
 # Configurable via env vars
-AVIATO_RPM = int(os.getenv("AVIATO_RPM", "20"))  # default 20 requests/minute (reduced from 30)
+AVIATO_RPM = int(os.getenv("AVIATO_RPM", "10"))  # default 10 requests/minute (more conservative)
 AVIATO_MAX_RETRIES = int(os.getenv("AVIATO_MAX_RETRIES", "5"))
-AVIATO_BASE_BACKOFF = float(os.getenv("AVIATO_BASE_BACKOFF", "1.0"))  # seconds (increased from 0.8)
+AVIATO_BASE_BACKOFF = float(os.getenv("AVIATO_BASE_BACKOFF", "2.0"))  # seconds (increased for better backoff)
 AVIATO_FOUNDER_RPM = int(os.getenv("AVIATO_FOUNDER_RPM", "6"))  # separate limiter for founders endpoint
+AVIATO_SEARCH_RPM = int(os.getenv("AVIATO_SEARCH_RPM", "5"))  # even more conservative for search endpoints
 
 _last_request_ts = 0.0
 _min_interval = 60.0 / max(AVIATO_RPM, 1)
@@ -63,6 +64,10 @@ _min_interval = 60.0 / max(AVIATO_RPM, 1)
 # Dedicated limiter for the founder lookup endpoint
 _founder_last_request_ts = 0.0
 _founder_min_interval = 60.0 / max(AVIATO_FOUNDER_RPM, 1)
+
+# Dedicated limiter for search endpoints (company/person search)
+_search_last_request_ts = 0.0
+_search_min_interval = 60.0 / max(AVIATO_SEARCH_RPM, 1)
 
 def _wait_for_rate_limit():
     """Sleep if needed to maintain the configured RPM."""
@@ -81,6 +86,15 @@ def _wait_for_founder_rate_limit():
     if elapsed < _founder_min_interval:
         time.sleep(_founder_min_interval - elapsed)
     _founder_last_request_ts = time.monotonic()
+
+def _wait_for_search_rate_limit():
+    """Sleep if needed to respect the search endpoint RPM (most restrictive)."""
+    global _search_last_request_ts
+    now = time.monotonic()
+    elapsed = now - _search_last_request_ts
+    if elapsed < _search_min_interval:
+        time.sleep(_search_min_interval - elapsed)
+    _search_last_request_ts = time.monotonic()
 
 def request_with_backoff(method: str, url: str, *, headers=None, json=None, params=None, max_retries: Optional[int] = None):
     """
@@ -1295,6 +1309,11 @@ def add_tree_analysis():
     from services.tree import test_tree
     test_tree()
 
+def bool_to_str(value):
+    if isinstance(value, bool):
+        return str(value).lower()  # "true" or "false"
+    return value
+
 def search_aviato_companies(search_filters):
     # Base DSL
     dsl = {
@@ -1302,7 +1321,7 @@ def search_aviato_companies(search_filters):
         "limit": 10000,
         "sort": [{"name": "asc"}]  # Default sort
     }
-    
+
     # Optional: custom sort if provided
     if "sort" in search_filters:
         dsl["sort"] = search_filters["sort"]
@@ -1312,75 +1331,83 @@ def search_aviato_companies(search_filters):
         dsl["nameQuery"] = search_filters["nameQuery"]
 
     # Build filters dynamically
-    filter_conditions = []
+    normal_filters = []   # standard filters that go inside AND
+    top_filters = []      # top-level filters (for booleans etc.)
+
+    # --- Normal fields ---
     if "country" in search_filters:
-        filter_conditions.append({"country": {"operation": "eq", "value": search_filters["country"]}})
+        normal_filters.append({"country": {"operation": "eq", "value": search_filters["country"]}})
     if "region" in search_filters:
-        # Support both single region and multiple regions
         region_value = search_filters["region"]
-        if isinstance(region_value, list):
-            filter_conditions.append({"region": {"operation": "in", "value": region_value}})
-        else:
-            filter_conditions.append({"region": {"operation": "eq", "value": region_value}})
+        normal_filters.append({
+            "region": {
+                "operation": "in" if isinstance(region_value, list) else "eq",
+                "value": region_value
+            }
+        })
     if "locality" in search_filters:
-        # Support both single locality and multiple localities
         locality_value = search_filters["locality"]
-        if isinstance(locality_value, list):
-            filter_conditions.append({"locality": {"operation": "in", "value": locality_value}})
-        else:
-            filter_conditions.append({"locality": {"operation": "eq", "value": locality_value}})
+        normal_filters.append({
+            "locality": {
+                "operation": "in" if isinstance(locality_value, list) else "eq",
+                "value": locality_value
+            }
+        })
     if "locationIDList" in search_filters:
-        filter_conditions.append({"locationIDList": {"operation": "in", "value": search_filters["locationIDList"]}})
+        normal_filters.append({"locationIDList": {"operation": "in", "value": search_filters["locationIDList"]}})
     if "industryList" in search_filters:
-        filter_conditions.append({"industryList": {"operation": "in", "value": search_filters["industryList"]}})
+        normal_filters.append({"industryList": {"operation": "in", "value": search_filters["industryList"]}})
     if "website" in search_filters:
-        filter_conditions.append({"website": {"operation": "eq", "value": search_filters["website"]}})
+        normal_filters.append({"website": {"operation": "eq", "value": search_filters["website"]}})
     if "linkedin" in search_filters:
-        filter_conditions.append({"linkedin": {"operation": "eq", "value": search_filters["linkedin"]}})
+        normal_filters.append({"linkedin": {"operation": "eq", "value": search_filters["linkedin"]}})
     if "twitter" in search_filters:
-        filter_conditions.append({"twitter": {"operation": "eq", "value": search_filters["twitter"]}})
+        normal_filters.append({"twitter": {"operation": "eq", "value": search_filters["twitter"]}})
     if "totalFunding" in search_filters:
-        # Search for companies with funding <= specified amount (early stage)
-        filter_conditions.append({"totalFunding": {"operation": "lte", "value": search_filters["totalFunding"]}})
+        normal_filters.append({"totalFunding": {"operation": "lte", "value": search_filters["totalFunding"]}})
     if "founded" in search_filters:
-        # Handle founded date - convert year to ISO datetime format for comparison
         founded_value = search_filters["founded"]
         if isinstance(founded_value, int):
-            # If it's a year, convert to start of year datetime for "gte" comparison
             founded_value = f"{founded_value}-01-01T00:00:00Z"
         elif isinstance(founded_value, str) and len(founded_value) == 4 and founded_value.isdigit():
-            # If it's a year string, convert to start of year datetime
             founded_value = f"{founded_value}-01-01T00:00:00Z"
-        
-        # Search for companies founded on or after the specified year (e.g., 2024-01-01 onwards)
-        filter_conditions.append({"founded": {"operation": "gte", "value": founded_value}})
-    
-    # Boolean company status fields
-    if "isStealth" in search_filters:
-        filter_conditions.append({"isStealth": {"operation": "eq", "value": search_filters["isStealth"]}})
-    if "isStartup" in search_filters:
-        filter_conditions.append({"isStartup": {"operation": "eq", "value": search_filters["isStartup"]}})
-    
-    # Signals field (likely array or specific value)
+        normal_filters.append({"founded": {"operation": "gte", "value": founded_value}})
+
+    # Signals
     if "signals" in search_filters:
         signals_value = search_filters["signals"]
-        if isinstance(signals_value, list):
-            filter_conditions.append({"signals": {"operation": "in", "value": signals_value}})
-        else:
-            filter_conditions.append({"signals": {"operation": "eq", "value": signals_value}})
-    
+        normal_filters.append({
+            "signals": {
+                "operation": "in" if isinstance(signals_value, list) else "eq",
+                "value": signals_value
+            }
+        })
+
     # Latest deal type
     if "latestDealType" in search_filters:
-        filter_conditions.append({"latestDealType": {"operation": "eq", "value": search_filters["latestDealType"]}})
-    
-    # Wrap filters in AND structure if any exist
-    if filter_conditions:
-        dsl["filters"] = [{"AND": filter_conditions}]
+        normal_filters.append({"latestDealType": {"operation": "eq", "value": search_filters["latestDealType"]}})
+
+    # --- Boolean company status fields ---
+    if "isStealth" in search_filters:
+        top_filters.append({"isStealth": {"operation": "eq", "value": search_filters["isStealth"]}})
+    if "isStartup" in search_filters:
+        top_filters.append({"isStartup": {"operation": "eq", "value": search_filters["isStartup"]}})
+
+    # --- Combine ---
+    filters = []
+    if normal_filters:
+        filters.append({"AND": normal_filters})
+    if top_filters:
+        filters.extend(top_filters)
+
+    if filters:
+        dsl["filters"] = filters
 
     payload = {"dsl": dsl}
-    
+
     # Debug logging
     logger.info("Company search payload: %s", payload)
+    print(json.dumps(payload, indent=2))  # for manual inspection
 
     url = "https://data.api.aviato.co/company/search"
 
@@ -1389,14 +1416,20 @@ def search_aviato_companies(search_filters):
         "Content-Type": "application/json"
     }
 
-    response = requests.post(url, headers=headers, json=payload)
+    _wait_for_search_rate_limit()
+
+    response = request_with_backoff("POST", url, headers=headers, json=payload)
+    if response is None:
+        logger.error("Company search failed: No response after retries")
+        return None
+
     logger.info("Company search response status: %s", response.status_code)
     if response.status_code == 200:
-        data = response.json()
-        return data
+        return response.json()
     else:
         logger.error("Profile search error: %s | %s", response.status_code, response.text[:200])
         return None
+
 
 def search_aviato_profiles(search_filters):
     # Base DSL
@@ -1461,13 +1494,21 @@ def search_aviato_profiles(search_filters):
         "Content-Type": "application/json"
     }
 
-    response = requests.post(url, headers=headers, json=payload)
+    # Use search-specific rate limiter before making request
+    _wait_for_search_rate_limit()
+    
+    response = request_with_backoff("POST", url, headers=headers, json=payload)
+    
+    if response is None:
+        logger.error("Person search failed: No response after retries")
+        return None
 
     if response.status_code == 200:
         data = response.json()
         return data
     else:
         logger.error("Profile search error: %s | %s", response.status_code, response.text[:200])
+        return None
 
 
 def enrich_companies(company_ids, chunk_size=100, max_retries=2):
@@ -1489,31 +1530,22 @@ def enrich_companies(company_ids, chunk_size=100, max_retries=2):
         chunk = company_ids[i:i+chunk_size]
         payload = {"lookups": [{"id": cid} for cid in chunk]}
         
-        # Retry logic for 500 errors
-        for attempt in range(max_retries + 1):
+        # Use rate limiter and backoff mechanism
+        response = request_with_backoff("POST", url, headers=headers, json=payload, max_retries=max_retries)
+        
+        if response is None:
+            logger.warning(f"Bulk enrich failed for chunk {i//chunk_size + 1} after retries")
+            continue
+        
+        if response.status_code == 200:
             try:
-                response = requests.post(url, headers=headers, json=payload, timeout=30)
-                if response.status_code == 200:
-                    data = response.json().get("companies", [])
-                    enriched.extend(data)
-                    break  # Success, exit retry loop
-                elif response.status_code == 500 and attempt < max_retries:
-                    logger.warning("500 error on chunk %d, attempt %d/%d. Retrying in 2 seconds...", 
-                                 i//chunk_size + 1, attempt + 1, max_retries + 1)
-                    time.sleep(2)  # Wait before retry
-                    continue
-                else:
-                    logger.warning("Error enriching chunk %d: %s | %s", 
-                                 i//chunk_size + 1, response.status_code, response.text[:200])
-                    break  # Don't retry for non-500 errors or after max retries
-            except requests.exceptions.RequestException as e:
-                logger.warning("Request exception on chunk %d, attempt %d: %s", 
-                             i//chunk_size + 1, attempt + 1, str(e))
-                if attempt < max_retries:
-                    time.sleep(2)
-                    continue
-                else:
-                    break
+                data = response.json().get("companies", [])
+                enriched.extend(data)
+            except (ValueError, requests.exceptions.JSONDecodeError) as e:
+                logger.error("JSON decode error for chunk %d: %s", i//chunk_size + 1, e)
+        else:
+            logger.warning("Error enriching chunk %d: %s | %s", 
+                         i//chunk_size + 1, response.status_code, response.text[:200])
 
     return enriched
 

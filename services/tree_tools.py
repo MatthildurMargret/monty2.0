@@ -237,8 +237,6 @@ def find_pipeline_companies(root_node, filter_date: Optional[str] = None) -> Lis
         ]
     return results
 
-
-
 # Test functions (uncomment to run manually)
 # if __name__ == "__main__":
 #     import json

@@ -322,6 +322,7 @@ And more about the company:
 
 Based on this traversal path, the specific investment context of each category (especially the final category), and the founder information, what is your investment recommendation?
 If the founder seems extremely strong, we can be more lenient on the company's criteria. If the company seems highly aligned with Montage's investment thesis, we can be more lenient on the founder's criteria.
+Note that 'neutral' investment status along the path is not a bad thing - maybe it's an interesting space that we haven't looked at. If the investment interest is explicitly 'Low', that's a more negative signal.
 Important: A past success indication score lower than 7 is not a strong score - a score of 7-9 is the sweet spot. The company tech score gives further indication of how interesting this is from a tech perspective, but it's not the most accurate indicator.
 Compare the company description to the context associated with the space and only recommend if the company is aligned with the investment criteria.
 Important to remember: 
@@ -1310,7 +1311,10 @@ def get_nodes_and_names():
             if montage_lead:
                 leads = [lead.strip() for lead in montage_lead.split(',')]
                 for lead in leads:
-                    lead_to_nodes[lead].append(" > ".join(new_path))
+                    if lead:  # Skip empty strings
+                        # Normalize the name to handle case variations
+                        normalized_lead = normalize_name(lead)
+                        lead_to_nodes[normalized_lead].append(" > ".join(new_path))
             
             if 'children' in content and content['children']:
                 traverse_and_collect(content['children'], new_path, lead_to_nodes)
@@ -1328,6 +1332,30 @@ def get_nodes_and_names():
     # Convert defaultdict to regular dict
     lead_to_nodes_dict = dict(lead_to_nodes)
     return lead_to_nodes_dict
+
+def normalize_name(name):
+    """Normalize a name to handle case variations and typos.
+    
+    Maps common variations to canonical names:
+    - Daphne, DAphne, daphne -> Daphne
+    - Connie, COnnie, connie -> Connie
+    - Matthildur, matthildur -> Matthildur
+    - etc.
+    """
+    name = name.strip()
+    name_lower = name.lower()
+    
+    # Map to canonical names
+    name_map = {
+        'daphne': 'Daphne',
+        'connie': 'Connie',
+        'matthildur': 'Matthildur',
+        'matt': 'Matt',
+        'todd': 'Todd',
+        'nia': 'Nia'
+    }
+    
+    return name_map.get(name_lower, name)  # Return canonical or original if not found
 
 def find_max_depths(node, path=None, depth=0, results=None):
     if path is None:

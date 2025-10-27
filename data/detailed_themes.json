@@ -1123,6 +1123,198 @@
       ],
       "business_model_focus": "B2B SaaS, SMB and Mid-Market Focus",
       "market_opportunity": "The U.S. accounting services market is valued at $145B, with over 46,000 CPA firms and 671,000 licensed CPAs. Amid a significant talent shortage and high attrition, firms are under pressure to adopt AI solutions. Platforms that build atomic infrastructure around real-time ledgering and expand into adjacent workflows stand to gain durable moats and high retention. Mid-market firms present a particularly attractive segment due to adoption readiness, compliance complexity, and larger budgets."
+    },
+    {
+  "thesis_name": "From RPA to Enterprise Agents: The New Era of Workflow Automation",
+  "category": "Enterprise Software / AI Infrastructure",
+  "detailed_description": "Enterprise automation is entering a new paradigm as robotic process automation (RPA) evolves into intelligent, agentic workflows powered by large language models, computer vision, and dynamic reasoning. Traditional RPA systems—exemplified by UiPath, Blue Prism, and Automation Anywhere—were rule-based, expensive to implement, and brittle when underlying interfaces changed. Modern AI-native automation replaces these legacy systems with resilient, browser-based agents capable of understanding unstructured data, reading interfaces visually, and executing actions autonomously. These 'Enterprise Agents' integrate the deterministic structure of RPA with adaptive AI reasoning, allowing both horizontal low-code automation and deep vertical solutions across regulated industries such as healthcare, finance, and insurance. The next generation of automation will democratize agent creation for non-technical users while meeting the accuracy, compliance, and scalability demands of large enterprises.",
+  "key_concepts": [
+    "agentic workflows",
+    "AI-native automation",
+    "large action models (LAMs)",
+    "low-code enterprise agents",
+    "browser automation",
+    "computer vision in RPA",
+    "workflow orchestration",
+    "human-in-the-loop automation",
+    "enterprise AI agents",
+    "vertical automation platforms"
+  ],
+  "core_problems_solved": [
+    "Eliminate brittle and maintenance-heavy RPA systems",
+    "Automate complex workflows involving unstructured data and decision-making",
+    "Enable non-technical employees to create personalized automations",
+    "Bridge legacy and modern systems through browser-based orchestration",
+    "Increase scalability and resilience of enterprise workflows",
+    "Enhance compliance and reliability with hybrid AI + deterministic control"
+  ],
+  "example_companies": [
+    {
+      "name": "Luminai",
+      "description": "Builds AI-powered browser agents for automating enterprise workflows, combining reasoning and visual interface understanding.",
+      "website": "https://www.luminai.com/"
+    },
+    {
+      "name": "Orby",
+      "description": "Develops 'large action models' that learn from user interactions to automatically generate workflow automations.",
+      "website": "https://www.orby.ai/"
+    },
+    {
+      "name": "Induced",
+      "description": "Offers an AI-native platform for dynamic process automation across industries such as finance and healthcare.",
+      "website": "https://www.induced.ai/"
+    },
+    {
+      "name": "Hebbia",
+      "description": "Provides vertical automation for financial services, using AI to extract insights and automate research workflows.",
+      "website": "https://www.hebbia.ai/"
+    },
+    {
+      "name": "Tennr",
+      "description": "Delivers healthcare automation agents that digitize faxes and streamline patient data retrieval and insurance workflows.",
+      "website": "https://www.tennr.com/"
     }
+  ],
+  "industry_tags": [
+    "enterprise automation",
+    "RPA",
+    "AI infrastructure",
+    "workflow AI",
+    "low-code",
+    "intelligent agents",
+    "automation platforms",
+    "vertical SaaS"
+  ],
+  "business_model_focus": "B2B SaaS, Enterprise and Vertical Solutions",
+  "market_opportunity": "The global RPA and enterprise automation market is projected to grow from $23 billion in 2024 to over $64 billion by 2034. As enterprises transition from rule-based RPA to adaptive AI agents, a massive replatforming cycle is underway. Horizontal platforms that democratize automation for non-technical users and vertical agents targeting regulated industries will capture the largest share of enterprise budgets. Winning companies will combine low-code usability with large action models, dynamic orchestration, and compliance-grade reliability."
+},
+{
+  "thesis_name": "The Next Era of Personal Finance: From Dashboards to Programmable Money",
+  "category": "Fintech / Consumer AI",
+  "detailed_description": "A generational and technological shift is transforming personal finance from static dashboards into adaptive, programmable systems. Over $84 trillion in wealth will transfer from Boomers to digital-native heirs who expect money to act on their behalf—intelligently, autonomously, and continuously. Legacy tools like Mint, Monarch, and Origin provided visibility but not agency: they tracked, but they didn’t act. The next wave of AI-native finance systems—powered by agentic reasoning, programmable ledgers, and real-time execution rails—will allow users to set personalized financial policies that self-optimize cash flow, yield, and spending in real time. These systems will unify context (real-time ledgers), cognition (agentic reasoning engines), and execution (programmable APIs and stablecoins) into a continuous, self-managing financial fabric. For a generation raised on personalized AI companions, this evolution from reactive dashboards to anticipatory finance is not just possible—it’s expected.",
+  "key_concepts": [
+    "agentic finance",
+    "programmable money",
+    "autonomous personal finance",
+    "AI financial copilots",
+    "personalized money management",
+    "agentic investing",
+    "open banking APIs",
+    "stablecoin settlement",
+    "programmable ledgers",
+    "financial automation UX"
+  ],
+  "core_problems_solved": [
+    "Eliminate manual financial management and static dashboards",
+    "Unify fragmented financial data across institutions into a real-time ledger",
+    "Automate decision-making and fund movement under user-defined rules",
+    "Bridge insight to action by turning advice into autonomous execution",
+    "Reduce human error and opportunity cost from idle or misallocated funds",
+    "Democratize access to intelligent financial systems for non-technical users"
+  ],
+  "example_companies": [
+    {
+      "name": "Vibe Money",
+      "description": "Building a programmable-money assistant for Gen Z and Gen Alpha that negotiates, reallocates, and moves funds on behalf of users.",
+      "website": "https://vibemoney.com/"
+    },
+    {
+      "name": "Gaus",
+      "description": "An AI investing copilot that personalizes investment decisions based on user goals, constraints, and real-time market data.",
+      "website": "https://www.gaus.ai/"
+    },
+    {
+      "name": "Dub",
+      "description": "Offers agentic investing tools that analyze market data and generate real-time investment insights for retail investors.",
+      "website": "https://www.dub.co/"
+    },
+    {
+      "name": "Rocket Money",
+      "description": "Provides bill management and subscription optimization but represents the static generation of financial tools being disrupted.",
+      "website": "https://www.rocketmoney.com/"
+    },
+    {
+      "name": "Monarch Money",
+      "description": "A modern personal finance dashboard—illustrative of today’s visualization-first approach that agentic systems aim to surpass.",
+      "website": "https://www.monarchmoney.com/"
+    }
+  ],
+  "industry_tags": [
+    "fintech",
+    "personal finance",
+    "autonomous agents",
+    "AI copilots",
+    "financial automation",
+    "wealth management",
+    "stablecoins",
+    "open banking"
+  ],
+  "business_model_focus": "B2C and B2B2C SaaS, Subscription and Performance-Based Models",
+  "market_opportunity": "Over $84 trillion in generational wealth will transition to digital-native users in the next two decades, alongside more than $1 trillion in annual U.S. consumer cash flows that remain unoptimized. As Gen Z and Gen Alpha adopt agentic finance, a new category of programmable money platforms will emerge—unifying budgeting, investing, bill management, and payments into continuous, autonomous systems. Early-stage companies that earn trust at the data layer and move from insights to action can define this category. The addressable opportunity spans asset management, deposit optimization, and real-time payments, collectively representing a trillion-dollar replatforming opportunity toward intelligent, autonomous finance."
+},
+{
+  "thesis_name": "AI in Autoimmune Drug Discovery: A Transformational Opportunity",
+  "category": "Biotech / AI Drug Discovery",
+  "detailed_description": "Autoimmune diseases affect more than 10% of the global population and represent one of the largest unmet needs in modern medicine, with over 100 distinct diseases and a $180B+ market opportunity. Historically dominated by broad immunosuppressants and symptom-managing biologics, the field has lacked the precision tools and causal understanding that transformed oncology. That is now changing. A new generation of AI-native biotech platforms is redefining how autoimmune diseases are understood and treated—integrating single-cell and spatial multiomic data with large language and generative models to discover targets, stratify patients, and design therapies. These companies operate as virtual, AI-first entities, compressing discovery timelines from years to months by orchestrating CRO networks through autonomous agents and feedback loops. As biological foundation models mature and clinical validation accelerates, autoimmune drug discovery stands at the cusp of a platform revolution—one where precision immunology meets computational design.",
+  "key_concepts": [
+    "autoimmune drug discovery",
+    "AI-native biotech",
+    "precision immunology",
+    "multiomic integration",
+    "foundation models for biology",
+    "generative molecular design",
+    "single-cell and spatial transcriptomics",
+    "target discovery and patient stratification",
+    "AI-driven IND workflows",
+    "computational immunology"
+  ],
+  "core_problems_solved": [
+    "Address the lack of targeted therapies across 100+ autoimmune diseases",
+    "Reduce early-stage drug development time by over 70%",
+    "Identify causal disease mechanisms and patient subpopulations via AI",
+    "Design and optimize multi-target biologics with higher efficacy and safety",
+    "Automate data curation, hypothesis generation, and IND preparation",
+    "Enable cost-efficient, virtual-first biopharma platforms with closed experimental loops"
+  ],
+  "example_companies": [
+    {
+      "name": "Absci",
+      "description": "Integrates generative AI and synthetic biology to design and optimize protein-based therapeutics, accelerating discovery across immune and inflammatory diseases.",
+      "website": "https://www.absci.com/"
+    },
+    {
+      "name": "Inceptive",
+      "description": "Develops foundation models for RNA and protein design, enabling new modalities for autoimmune and rare disease therapy.",
+      "website": "https://www.inceptive.bio/"
+    },
+    {
+      "name": "Nimbus Therapeutics",
+      "description": "Combines computational chemistry with immunology insights to target disease-driving pathways in autoimmunity and inflammation.",
+      "website": "https://www.nimbustx.com/"
+    },
+    {
+      "name": "CuraBio",
+      "description": "An emerging AI-native immunology platform leveraging multiomic data to discover and validate precision autoimmune drug targets.",
+      "website": "https://www.curabio.ai/"
+    },
+    {
+      "name": "Genuity Science",
+      "description": "Uses population-scale genomic and clinical data with machine learning to identify causal variants and pathways in complex diseases including autoimmunity.",
+      "website": "https://www.genuityscience.com/"
+    }
+  ],
+  "industry_tags": [
+    "autoimmune disease",
+    "AI drug discovery",
+    "biotech",
+    "immunology",
+    "precision medicine",
+    "omics",
+    "molecular design",
+    "AI-first biotech"
+  ],
+  "business_model_focus": "AI-enabled platform biotech, Data Licensing, Strategic Partnerships, and Co-Development with Pharma",
+  "market_opportunity": "The autoimmune therapeutics market is projected to exceed $180B by 2030, with over 100 diseases lacking effective targeted treatments. AI-native drug discovery platforms are compressing early-stage development timelines by up to 70%, from target discovery to IND readiness within 18–24 months. As single-cell and spatial omics datasets scale to tens of millions of patient-derived cells, and as generative models advance in protein and antibody design, precision immunology represents a once-in-a-decade opportunity to create category-defining biotech companies. The winners will combine proprietary immune datasets, generative model architectures, and CRO-orchestrated experimental feedback loops to unlock disease-modifying therapies across the autoimmune landscape."
+}
             
   ]
