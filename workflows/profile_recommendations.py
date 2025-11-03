@@ -129,6 +129,8 @@ def select_best_profiles_with_ai(profiles, target_count=3):
     """
     if len(profiles) <= target_count:
         return profiles
+
+    return profiles[:target_count]
     
     # Build context for each profile
     profile_summaries = []
@@ -200,48 +202,42 @@ Return your response in this exact JSON format:
     
     try:
         logger.info("Using AI to select best profiles...")
-        response = ask_monty(prompt, data, max_tokens=300)
+        response = ask_monty(prompt, data, max_tokens=500)
         
         # Parse JSON response
         import json
         import re
         
-        # Try to extract JSON from response
-        json_match = re.search(r'\{.*\}', response, re.DOTALL)
-        if json_match:
-            result = json.loads(json_match.group())
-            selections = result.get('selections', [])
-            
+        try:
+            # Clean markdown fences and whitespace
+            clean_response = response.strip()
+            clean_response = re.sub(r"```(?:json)?", "", clean_response).strip()
+
+            # Try to find the first JSON object (non-greedy)
+            json_match = re.search(r"\{.*?\}", clean_response, re.DOTALL)
+            if json_match:
+                json_text = json_match.group(0)
+                result = json.loads(json_text)
+                selections = result.get("selections", [])
+            else:
+                raise ValueError("No JSON object found in response")
+
             selected_profiles = []
             for selection in selections[:target_count]:
-                idx = selection.get('profile_number', 0) - 1  # Convert to 0-indexed
+                idx = selection.get('profile_number', 0) - 1
                 if 0 <= idx < len(profiles):
                     profile = profiles[idx].copy()
-                    # Add AI reasoning to profile
                     profile['ai_vertical'] = selection.get('vertical', 'general')
                     profile['ai_reason'] = selection.get('reason', '')
                     selected_profiles.append(profile)
-            
+
             if selected_profiles:
                 logger.info(f"AI selected {len(selected_profiles)} profiles with reasoning")
                 return selected_profiles
-        
-        # Fallback: try to parse as comma-separated numbers
-        logger.warning("Could not parse JSON, trying fallback parsing")
-        selected_indices = []
-        for part in response.strip().split(','):
-            try:
-                idx = int(part.strip()) - 1
-                if 0 <= idx < len(profiles):
-                    selected_indices.append(idx)
-            except ValueError:
-                continue
-        
-        if selected_indices:
-            selected_profiles = [profiles[i] for i in selected_indices[:target_count]]
-            logger.info(f"AI selected {len(selected_profiles)} profiles (fallback mode)")
-            return selected_profiles
-        else:
+
+        except Exception as e:
+            logger.warning(f"Could not parse JSON ({e}), trying fallback parsing")
+            # Fallback to top profiles if AI output invalid
             logger.warning("AI selection failed, falling back to top profiles")
             return profiles[:target_count]
             

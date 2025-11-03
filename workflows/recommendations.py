@@ -62,6 +62,7 @@ def find_new_recs(username, test=True):
     """
     from services.tree import get_nodes_and_names
     from services.database import get_db_connection
+    from services.path_mapper import get_all_matching_old_paths
     
     conn = get_db_connection()
     if not conn:
@@ -103,7 +104,20 @@ def find_new_recs(username, test=True):
         
         profiles = pd.DataFrame()
         for category in categories:
+            # Get all old paths that map to this new category
+            old_paths = get_all_matching_old_paths(category)
+            
+            # Match profiles using both new and old paths
+            # First try new path (for any newly categorized profiles)
             matching = recs[recs['tree_path'].str.contains(category, na=False, regex=False)]
+            
+            # Then match using old paths (for existing database entries)
+            for old_path in old_paths:
+                old_matching = recs[recs['tree_path'].str.contains(old_path, na=False, regex=False)]
+                matching = pd.concat([matching, old_matching])
+            
+            # Remove duplicates and add to profiles
+            matching = matching.drop_duplicates(subset=['name', 'company_name'])
             profiles = pd.concat([profiles, matching])
         
         if len(profiles) == 0:
@@ -134,7 +148,7 @@ def find_new_recs(username, test=True):
         category_string = category_string[:-2]  # Remove trailing comma
         
         # Build Slack message
-        greeting_text = f"Hey {user}! I came across these profiles that I wanted to share with you, given your interest in {category_string}."
+        greeting_text = f"Hey {user}! I came across these profiles in {category_string} that I wanted to share with you."
         message_lines = [greeting_text]
         
         for _, row in profiles.iterrows():
@@ -272,6 +286,7 @@ def send_extra_recs(test=True):
     """
     from services.tree import get_nodes_and_names
     from services.database import get_db_connection
+    from services.path_mapper import get_all_matching_old_paths
     
     conn = get_db_connection()
     if not conn:
@@ -329,8 +344,20 @@ def send_extra_recs(test=True):
         # Filter profiles matching this user's categories
         profiles = pd.DataFrame()
         for category in categories:
-            # Use regex=False to avoid regex interpretation warnings
+            # Get all old paths that map to this new category
+            old_paths = get_all_matching_old_paths(category)
+            
+            # Match profiles using both new and old paths
+            # First try new path (for any newly categorized profiles)
             matching = recs[recs['tree_path'].str.contains(category, na=False, regex=False)]
+            
+            # Then match using old paths (for existing database entries)
+            for old_path in old_paths:
+                old_matching = recs[recs['tree_path'].str.contains(old_path, na=False, regex=False)]
+                matching = pd.concat([matching, old_matching])
+            
+            # Remove duplicates before adding to profiles
+            matching = matching.drop_duplicates(subset=['name', 'company_name'])
             profiles = pd.concat([profiles, matching])
         
         if len(profiles) == 0:
@@ -374,10 +401,10 @@ def send_extra_recs(test=True):
         for category in categories_mentioned:
             last_node = category.split(' > ')[-2] if len(category.split(' > ')) > 1 else category.split(' > ')[0]
             category_string += f"{last_node}, "
-        category_string = category_string[:-2]  # Remove trailing comma
+        category_string = category_string[:-2].lower()  # Remove trailing comma
         
         # Build Slack message
-        greeting_text = f"Hey {user}! I came across these profiles that I wanted to share with you, given your interest in {category_string}."
+        greeting_text = f"Hey {user}! I came across these profiles in {category_string} that I wanted to share with you."
         message_lines = [greeting_text]
         
         print(greeting_text)
@@ -438,7 +465,7 @@ def main():
     # Uncomment the lines below when ready to send to everyone
     print("\n📧 Sending recommendations to all users:")
     print("-" * 60)
-    send_extra_recs(test=False)
+    send_extra_recs(test=True)
     
     print("\n" + "=" * 60)
     print("✅ Done!")

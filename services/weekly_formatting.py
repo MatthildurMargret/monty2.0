@@ -262,12 +262,12 @@ def generate_html(preseed_df, tracking_df, recs, pipeline_dict,
         totals_line = f"<small>Total companies analyzed since {filter_date}: {total_companies}</small>" if total_companies else ""
 
         insights_html = "<div class='section'><h3>Sourcing results</h3>"
-        insights_html += f"""
-        <div class="summary-box">
-        <h4>This month’s hottest verticals in the pipeline are:</h4>
-        <p>{hot_list}</p>
-        </div>
-        """
+        #insights_html += f"""
+        #<div class="summary-box">
+        #<h4>This month’s hottest verticals in the pipeline are:</h4>
+        #<p>{hot_list}</p>
+        #</div>
+        #"""
         insights_html += "<p>Now let's go over some aligned companies I've found over the week. </p>"
         category_order = ["Fintech", "Commerce", "Healthcare", "AI"]
         seen_founders = set()  # Track unique founders across all categories

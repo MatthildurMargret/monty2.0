@@ -4,6 +4,7 @@ from services.database import get_founders_by_path
 import pandas as pd
 from datetime import datetime, timedelta
 from workflows.recommendations import mark_prev_recs
+from services.path_mapper import get_all_matching_old_paths
 from workflows.profile_recommendations import get_profile_recommendations, mark_profiles_as_recommended, format_profiles_for_weekly_update
 
 def get_recent_deals():
@@ -240,20 +241,34 @@ def get_recs():
         print(f"Category: {category}")
         for sub in subs:
             print(f"  Subcategory: {sub['subcategory']} ({sub['count']} companies)")
+            # --- NEW CODE: map to old taxonomy paths ---
+            new_path = sub['subcategory']
+            old_paths = get_all_matching_old_paths(new_path)
+            mapped_paths = old_paths if old_paths else [new_path]
             
-            # Get top founder for this subcategory
-            founders = get_founders_by_path(sub['subcategory'])
-            if founders:  # Only process if we have founders
+            # --- Get top founder for this subcategory (search new + old paths) ---
+            founders = []
+            for path in mapped_paths:
+                result = get_founders_by_path(path)
+                if result:
+                    founders.extend(result)
+
+            if founders:
                 founders_df = pd.DataFrame(founders)
-                founders_df.sort_values(by='startup_experience_score', ascending=False, inplace=True)
-                top_founder = founders_df.iloc[0].to_dict()  # Convert Series to dict
-                sub['top_founder'] = top_founder  # Add directly to the sub dictionary
+                founders_df.sort_values(
+                    by='past_success_indication_score',
+                    ascending=False,
+                    inplace=True
+                )
+                top_founder = founders_df.iloc[0].to_dict()
+                sub['top_founder'] = top_founder
             else:
                 sub['top_founder'] = None
+
             top_founders.append(sub['top_founder'])
             
             # Get relevant deal activity for this subcategory (with same date filter)
-            deal_data = get_relevant_deals(sub['subcategory'], tree, filter_date="2025-09-01")
+            deal_data = get_relevant_deals(sub['subcategory'], tree, filter_date="2025-10-01")
             sub['deal_activity'] = deal_data
 
             # Also attach 'interest' metadata from the corresponding subcategory node
@@ -345,11 +360,12 @@ def main():
         print(f"Found {len(profile_ids)} tracking profile recommendations")
     else:
         print("No new tracking profile recommendations available")
+        return
     
     print("\nGenerating HTML email...")
-    greeting_text = "Happy Friday everyone! I'm starting a new segment of the weekly update, highlighting three profiles that were flagged as likely to start a company... "
-    greeting_text += "There were a ton of deals done this week, highlighted below, and I'm very excited about the early stage companies I've sourced for you. Check them out!"
-    greeting_text += "\n\nWishing you all a great weekend!\n\n - Monty"
+    greeting_text = "Happy Halloween! Apologies for spamming your inbox today, I accidentally sent you last week's update earlier. Ignore it! Now here's what's new this week: "
+    greeting_text += "There were a ton of deals done this week, highlighted below, and I'm very excited about the early stage companies I've sourced for you. "
+    greeting_text += "\n\nWishing you all a spooky evening and a great weekend!\n\n - Monty"
     html_output = generate_html(recent_deals, tracking, recs, pipeline_dict, greeting_text, profile_recs=profile_recs)
     
     # Save to file

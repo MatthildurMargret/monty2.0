@@ -777,7 +777,7 @@ Available ROOT categories:
 
 CRITICAL INSTRUCTIONS FOR ROOT LEVEL:
 1. You MUST choose from one of the existing root categories shown above.
-2. DO NOT create new categories at the root level.
+2. DO NOT create new categories 
 3. Pick the best fit from: Commerce, Healthcare, Fintech, Other, or AI.
 4. Consider the deal's industry, vertical, and business model as strong indicators.
 5. If unsure, use "Other" as the fallback category.
@@ -808,12 +808,9 @@ Available categories and sub-categories:
 ---
 
 Instructions:
-1. Pick the most relevant category from the available children options.
-2. If no existing category fits well, suggest ONE new category name that would be appropriate at this level.
-3. New categories should be at the same abstraction level as the existing options shown above.
-4. DO NOT suggest categories that duplicate or are too similar to categories already in the current path.
-5. Consider the deal's industry, vertical, and business model as strong indicators.
-6. Say "STOP" if you've reached the right level of classification for this deal.
+1. Pick the most relevant category from the available children options. Don't choose the subcategory, just the parent category and we'll go from there.
+2. Consider the deal's industry, vertical, and business model as strong indicators.
+3. Say "STOP" if you've reached the right level of classification for this deal.
 
 Respond with just the category name, or "STOP" if the current level is appropriate.
 
@@ -852,8 +849,8 @@ STOP
                     print(f"  ⚠️  Invalid node name suggested: {choice}, using fallback")
                     return path  # Return current path as fallback
                 
-                print(f"  ✓ Will create new node: {choice}")
-                return path + [choice]
+                print(f"  ✓ Want to create new node: {choice}")
+                return path
             
             return find_best_node_for_deal(node["children"][choice], deal_description, path + [choice])
         except Exception as e:

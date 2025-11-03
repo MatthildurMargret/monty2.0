@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Project Results – GroundTruth</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: Inter, sans-serif;
+      background-color: #faf9f6;
+      color: #111827;
+      display: flex;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    /* Sidebar */
+    .sidebar {
+      width: 240px;
+      background-color: #1e1b4b;
+      color: white;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      padding: 24px;
+      flex-shrink: 0;
+      position: sticky;
+      top: 0;
+    }
+    .sidebar h1 {
+      font-size: 20px;
+      margin-bottom: 40px;
+    }
+    .nav-item {
+      margin: 12px 0;
+      font-weight: 500;
+      opacity: 0.85;
+      cursor: pointer;
+    }
+    .nav-item:hover { opacity: 1; }
+
+    /* Main area */
+    .main {
+      flex: 1;
+      overflow-y: auto;
+      height: 100vh;
+      padding: 40px 60px;
+    }
+
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 32px;
+    }
+    .header h2 {
+      font-size: 24px;
+      font-weight: 600;
+    }
+
+    .primary-btn {
+      padding: 10px 20px;
+      border: none;
+      border-radius: 6px;
+      background: #1e1b4b;
+      color: white;
+      cursor: pointer;
+    }
+
+    /* KPI grid */
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 20px;
+      margin-bottom: 40px;
+    }
+    .kpi-card {
+      background: white;
+      border-radius: 12px;
+      padding: 20px;
+      text-align: center;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+    }
+    .kpi-label {
+      font-size: 14px;
+      color: #6b7280;
+      margin-bottom: 8px;
+    }
+    .kpi-value {
+      font-size: 26px;
+      font-weight: 600;
+    }
+
+    /* Sections */
+    .section {
+      margin-bottom: 40px;
+    }
+    .section h3 {
+      font-size: 18px;
+      margin-bottom: 16px;
+      font-weight: 600;
+    }
+
+    /* Insight cards */
+    .insight-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+    .insight-card {
+      background: white;
+      border-radius: 10px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+      padding: 18px 20px;
+    }
+    .insight-card h4 {
+      margin: 0 0 8px;
+      font-size: 16px;
+      font-weight: 600;
+    }
+    .insight-card p {
+      margin: 0;
+      color: #555;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+    .confidence {
+      margin-top: 6px;
+      font-size: 13px;
+      color: #6b7280;
+    }
+
+    /* Evidence table */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: white;
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    th, td {
+      padding: 12px 16px;
+      border-bottom: 1px solid #eee;
+      text-align: left;
+    }
+    th {
+      background-color: #f5f5ff;
+      font-size: 14px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    /* Export box */
+    .export-box {
+      background: #f5f3ff;
+      border-radius: 10px;
+      padding: 24px;
+      text-align: center;
+    }
+    .export-box p {
+      font-size: 14px;
+      color: #4b5563;
+      margin-bottom: 12px;
+    }
+  </style>
+</head>
+
+<body>
+  <aside class="sidebar">
+    <h1>GroundTruth</h1>
+    <div class="nav-item">Dashboard</div>
+    <div class="nav-item">Projects</div>
+    <div class="nav-item">Insights</div>
+    <div class="nav-item">Reports</div>
+    <div class="nav-item">Settings</div>
+  </aside>
+
+  <main class="main">
+    <div class="header">
+      <h2>ChargeFlow Diligence – Results Summary</h2>
+      <button class="primary-btn">Export Report</button>
+    </div>
+
+    <!-- KPI metrics -->
+    <section class="kpi-grid">
+      <div class="kpi-card">
+        <div class="kpi-label">Interviews Completed</div>
+        <div class="kpi-value">47</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Average Insight Confidence</div>
+        <div class="kpi-value">92%</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Distinct Themes Identified</div>
+        <div class="kpi-value">12</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Analyst Hours Saved</div>
+        <div class="kpi-value">28</div>
+      </div>
+    </section>
+
+    <!-- Summary brief -->
+    <section class="section">
+      <h3>Executive Summary</h3>
+      <div class="insight-card">
+        <p><strong>Overall uptime:</strong> 93% (vs. claimed 98%)</p>
+        <p><strong>Key risks:</strong> Spare-part delays, technician coverage, incomplete fault logging.</p>
+        <p><strong>Recommendation:</strong> Require regional maintenance hubs and improved telemetry before scale-up.</p>
+        <p><strong>Confidence:</strong> 92% — based on 47 field interviews across 6 regions.</p>
+      </div>
+    </section>
+
+    <!-- Key insights -->
+    <section class="section">
+      <h3>Key Insights</h3>
+      <div class="insight-grid">
+        <div class="insight-card">
+          <h4>Power-Module Failures in Heat</h4>
+          <p>Reported in 19 of 47 technician interviews; downtime averages 2.3 days.</p>
+          <div class="confidence">Confidence: 0.86</div>
+        </div>
+        <div class="insight-card">
+          <h4>Spare-Parts Logistics Bottleneck</h4>
+          <p>Centralized inventory adds 4–5 day delay; technicians request local stock.</p>
+          <div class="confidence">Confidence: 0.82</div>
+        </div>
+        <div class="insight-card">
+          <h4>Technician Coverage Stretch</h4>
+          <p>Each tech maintains 3–4 sites, slowing response and quality checks.</p>
+          <div class="confidence">Confidence: 0.78</div>
+        </div>
+        <div class="insight-card">
+          <h4>Software Fault Logging Gaps</h4>
+          <p>Remote resets fix 30% of issues but remain untracked in uptime data.</p>
+          <div class="confidence">Confidence: 0.74</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Evidence table -->
+    <section class="section">
+      <h3>Supporting Evidence</h3>
+      <table>
+        <tr>
+          <th>Interview ID</th>
+          <th>Role</th>
+          <th>Region</th>
+          <th>Key Quote</th>
+        </tr>
+        <tr>
+          <td>I-031</td>
+          <td>Field Technician</td>
+          <td>Texas</td>
+          <td>“Two out of ten chargers offline — blown fuses from heat.”</td>
+        </tr>
+        <tr>
+          <td>I-044</td>
+          <td>Maintenance Lead</td>
+          <td>California</td>
+          <td>“We wait four or five days for replacement modules.”</td>
+        </tr>
+        <tr>
+          <td>I-046</td>
+          <td>Ops Manager</td>
+          <td>Georgia</td>
+          <td>“Techs cover too many stations; average response three days.”</td>
+        </tr>
+        <tr>
+          <td>I-052</td>
+          <td>Engineer</td>
+          <td>Illinois</td>
+          <td>“Remote reboot clears most faults, but logs don’t show it.”</td>
+        </tr>
+      </table>
+    </section>
+
+    <!-- Export section -->
+    <section class="section">
+      <h3>Deliverables</h3>
+      <div class="export-box">
+        <p>Download your synthesized report or share insights with your team.</p>
+        <button class="primary-btn">⬇ Download PDF Report</button>
+        <button class="primary-btn" style="background:#4338ca; margin-left:10px;">Share Project Link</button>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

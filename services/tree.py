@@ -987,8 +987,8 @@ def test_tree():
     school_tags, company_tags, profile_url, history, location
     FROM founders 
     WHERE founder = true AND (tree_result IS NULL OR tree_result = '')  
-    AND product != ''  AND past_success_indication_score > 0
-    AND history = '' ORDER BY past_success_indication_score DESC 
+    AND product != '' 
+    AND history = ''  
     """
     cursor.execute(query)
     rows = cursor.fetchall()

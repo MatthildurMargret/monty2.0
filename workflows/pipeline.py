@@ -138,7 +138,9 @@ def analyze_pipeline_companies():
         company_description = create_company_description(company)
         
         # Find the best path in the tree
-        best_path = find_best_node_for_company(tree_json, company_description)
+        # Wrap the tree to match expected structure (root with children)
+        wrapped_tree = {"children": tree_json}
+        best_path = find_best_node_for_company(wrapped_tree, company_description)
         
         results.append({
             'company_name': company_name,
