@@ -2017,7 +2017,7 @@ def integrate_context_thoughts(tree_json):
             thoughts = f.readlines()
         
         # Only process the last 30 thoughts to avoid overwhelming the tree
-        last_thoughts = thoughts[-30:] if len(thoughts) > 30 else thoughts
+        last_thoughts = thoughts[-50:] if len(thoughts) > 50 else thoughts
         
         print(f"Processing {len(last_thoughts)} recent thoughts...")
         

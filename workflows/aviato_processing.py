@@ -1332,7 +1332,6 @@ def search_aviato_companies(search_filters):
 
     # Build filters dynamically
     normal_filters = []   # standard filters that go inside AND
-    top_filters = []      # top-level filters (for booleans etc.)
 
     # --- Normal fields ---
     if "country" in search_filters:
@@ -1389,16 +1388,14 @@ def search_aviato_companies(search_filters):
 
     # --- Boolean company status fields ---
     if "isStealth" in search_filters:
-        top_filters.append({"isStealth": {"operation": "eq", "value": search_filters["isStealth"]}})
+        normal_filters.append({"isStealth": {"operation": "eq", "value": search_filters["isStealth"]}})
     if "isStartup" in search_filters:
-        top_filters.append({"isStartup": {"operation": "eq", "value": search_filters["isStartup"]}})
+        normal_filters.append({"isStartup": {"operation": "eq", "value": search_filters["isStartup"]}})
 
     # --- Combine ---
     filters = []
     if normal_filters:
         filters.append({"AND": normal_filters})
-    if top_filters:
-        filters.extend(top_filters)
 
     if filters:
         dsl["filters"] = filters
@@ -1808,52 +1805,152 @@ def aviato_search(search_filters, source="aviato_search"):
     else:
         logger.info("No founder data to insert")
 
-def aviato_discover():
-    import json
-    total_inserted = 0
-    total_searches = 0
-    file_paths = ["config/aviato_search_fintech.json", "config/aviato_search_healthcare.json", "config/aviato_search_commerce.json", "config/aviato_search_other.json"]
+# Discovery state management
+DISCOVERY_STATE_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "discovery_state.json")
 
+def load_discovery_state():
+    """Load the last search position from state file."""
+    try:
+        if os.path.exists(DISCOVERY_STATE_FILE):
+            with open(DISCOVERY_STATE_FILE, "r") as f:
+                state = json.load(f)
+                return state
+        return {"last_search_index": 0, "cycle": 0}
+    except Exception as e:
+        logger.warning("Error loading discovery state: %s. Starting from beginning.", e)
+        return {"last_search_index": 0, "cycle": 0}
+
+def save_discovery_state(state):
+    """Save the current search position to state file."""
+    try:
+        os.makedirs(os.path.dirname(DISCOVERY_STATE_FILE), exist_ok=True)
+        with open(DISCOVERY_STATE_FILE, "w") as f:
+            json.dump(state, f, indent=2)
+    except Exception as e:
+        logger.error("Error saving discovery state: %s", e)
+
+def load_all_searches(file_paths):
+    """Load all searches from all config files and flatten into a single list with metadata."""
+    all_searches = []
     for file_path in file_paths:
         try:
-            logger.info("Loading search config from: %s", file_path)
             with open(file_path, "r") as f:
                 data = json.load(f)
                 search_filters = data.get("search_filters", [])
-                logger.info("Found %d searches in %s", len(search_filters), file_path)
-                
-                for search_config in search_filters:
-                    total_searches += 1
-                    search_name = search_config.get("name", "unknown")
-                    logger.info("[%d] Starting search: %s", total_searches, search_name)
-                    
-                    try:
-                        # Collect founder data for this search
-                        founder_data = aviato_search_collect(search_config.get("filter", {}), search_config.get("source", "aviato_search"))
-                        
-                        if founder_data:
-                            # Convert to DataFrame and insert immediately
-                            df = pd.DataFrame(founder_data)
-                            logger.info("Inserting %d founders from %s search", len(df), search_name)
-                            
-                            success = insert_search_results(df, table_name="search_list")
-                            if success:
-                                total_inserted += len(df)
-                                logger.info("Successfully inserted %d founders from %s. Total so far: %d", len(df), search_name, total_inserted)
-                            else:
-                                logger.error("Failed to insert founder data from %s search", search_name)
-                        else:
-                            logger.info("No founder data collected from %s search", search_name)
-                    except Exception as e:
-                        logger.error("Error processing search %s: %s", search_name, e, exc_info=True)
-                        continue
-                        
-                logger.info("Completed file %s", file_path)
+                for idx, search_config in enumerate(search_filters):
+                    all_searches.append({
+                        "file_path": file_path,
+                        "file_index": idx,
+                        "search_config": search_config,
+                        "search_name": search_config.get("name", "unknown")
+                    })
         except Exception as e:
             logger.error("Error loading config file %s: %s", file_path, e, exc_info=True)
             continue
+    return all_searches
+
+def aviato_discover():
+    import time
+    from datetime import datetime
     
-    logger.info("Discovery complete. Processed %d total searches. Total founders inserted: %d", total_searches, total_inserted)
+    MAX_RUNTIME_HOURS = 6
+    MAX_RUNTIME_SECONDS = MAX_RUNTIME_HOURS * 3600
+    
+    total_inserted = 0
+    total_searches = 0
+    start_time = time.time()
+    
+    file_paths = ["config/aviato_search_fintech.json", "config/aviato_search_healthcare.json", "config/aviato_search_commerce.json", "config/aviato_search_other.json"]
+    
+    # Load all searches into a flattened list
+    logger.info("Loading all search configurations...")
+    all_searches = load_all_searches(file_paths)
+    total_search_count = len(all_searches)
+    logger.info("Loaded %d total searches across all config files", total_search_count)
+    
+    if total_search_count == 0:
+        logger.warning("No searches found in config files")
+        return
+    
+    # Load state to resume from last position
+    state = load_discovery_state()
+    start_index = state.get("last_search_index", 0)
+    cycle = state.get("cycle", 0)
+    
+    logger.info("Resuming discovery from search index %d (cycle %d)", start_index, cycle)
+    
+    # Process searches starting from last position
+    current_index = start_index
+    searches_processed_this_run = 0
+    
+    while True:
+        # Check if we've exceeded time limit
+        elapsed_time = time.time() - start_time
+        if elapsed_time >= MAX_RUNTIME_SECONDS:
+            logger.info("Reached 6-hour time limit. Elapsed: %.2f hours. Stopping discovery.", elapsed_time / 3600)
+            break
+        
+        # Get current search
+        search_info = all_searches[current_index]
+        search_config = search_info["search_config"]
+        search_name = search_info["search_name"]
+        file_path = search_info["file_path"]
+        
+        total_searches += 1
+        searches_processed_this_run += 1
+        
+        logger.info("[Cycle %d, Search %d/%d] Starting search: %s (from %s)", 
+                   cycle, current_index + 1, total_search_count, search_name, os.path.basename(file_path))
+        logger.info("Time remaining: %.2f hours", (MAX_RUNTIME_SECONDS - elapsed_time) / 3600)
+        
+        try:
+            # Collect founder data for this search
+            founder_data = aviato_search_collect(search_config.get("filter", {}), search_config.get("source", "aviato_search"))
+            
+            if founder_data:
+                # Convert to DataFrame and insert immediately
+                df = pd.DataFrame(founder_data)
+                logger.info("Inserting %d founders from %s search", len(df), search_name)
+                
+                success = insert_search_results(df, table_name="search_list")
+                if success:
+                    total_inserted += len(df)
+                    logger.info("Successfully inserted %d founders from %s. Total so far: %d", len(df), search_name, total_inserted)
+                else:
+                    logger.error("Failed to insert founder data from %s search", search_name)
+            else:
+                logger.info("No founder data collected from %s search", search_name)
+        except Exception as e:
+            logger.error("Error processing search %s: %s", search_name, e, exc_info=True)
+        
+        # Move to next search
+        current_index += 1
+        
+        # Check if we've completed all searches (circular logic)
+        if current_index >= total_search_count:
+            completed_full_cycle = True
+            cycle += 1
+            current_index = 0  # Loop back to beginning
+            logger.info("Completed all searches. Starting cycle %d from beginning...", cycle)
+        
+        # Save state after each search (so we can resume if interrupted)
+        state = {
+            "last_search_index": current_index,
+            "cycle": cycle,
+            "last_updated": datetime.now().isoformat(),
+            "total_searches_processed": searches_processed_this_run
+        }
+        save_discovery_state(state)
+        
+        # Check time again before continuing (in case the last search took a long time)
+        elapsed_time = time.time() - start_time
+        if elapsed_time >= MAX_RUNTIME_SECONDS:
+            logger.info("Reached 6-hour time limit after search. Stopping discovery.")
+            break
+    
+    logger.info("Discovery complete. Processed %d searches in this run. Total founders inserted: %d", 
+               searches_processed_this_run, total_inserted)
+    logger.info("Next run will resume from search index %d (cycle %d)", current_index, cycle)
     
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Aviato processing pipeline")

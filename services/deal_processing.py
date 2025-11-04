@@ -13,6 +13,79 @@ from urllib.parse import urlparse
 from services.groq_api import get_groq_response
 from services.openai_api import web_search
 from datetime import datetime
+import re
+
+def clean_company_name(company_name):
+    """
+    Clean company name by removing headlines, funding amounts, action verbs, and extra descriptions.
+    
+    Examples:
+    - "Actively AI Bags $17.5M Series A" -> "Actively AI"
+    - "Companyname Bags $50m funding" -> "Companyname"
+    - "Adaptive Security Bags $43M in Funding Round" -> "Adaptive Security"
+    
+    Args:
+        company_name (str): Raw company name that may contain extra text
+        
+    Returns:
+        str: Cleaned company name
+    """
+    if not company_name or not isinstance(company_name, str):
+        return company_name
+    
+    # Common action verbs/phrases that indicate headline text to remove
+    action_verbs = [
+        r'\s+Bags\s+',
+        r'\s+Grabs\s+',
+        r'\s+Raises\s+',
+        r'\s+Secures\s+',
+        r'\s+Closes\s+',
+        r'\s+Lands\s+',
+        r'\s+Nabs\s+',
+        r'\s+Scores\s+',
+        r'\s+Announces\s+',
+        r'\s+Completes\s+',
+        r'\s+Emerges\s+',
+        r'\s+Inks\s+',
+        r'\s+Scoops\s+',
+        r'\s+Received\s+',
+        r'\s+Received\s+',
+        r'\s+in\s+funding',
+        r'\s+funding',
+        r'\s+round',
+        r'\s+Round',
+    ]
+    
+    cleaned = company_name.strip()
+    
+    # Remove action verbs and everything after them
+    for verb_pattern in action_verbs:
+        cleaned = re.sub(verb_pattern + r'.*$', '', cleaned, flags=re.IGNORECASE)
+    
+    # Remove funding amounts (e.g., "$50M", "$1.2M", "$500K")
+    cleaned = re.sub(r'\$[\d.]+[MK]?\s*', '', cleaned, flags=re.IGNORECASE)
+    
+    # Remove common funding round types if they appear at the end
+    round_types = ['Series A', 'Series B', 'Series C', 'Series D', 'Series E', 
+                   'Seed', 'Pre-Seed', 'Pre Seed', 'Series', 'Round', 'Funding']
+    for round_type in round_types:
+        # Remove if it appears at the end with optional "in" before it
+        pattern = r'\s+in\s+' + re.escape(round_type) + r'$'
+        cleaned = re.sub(pattern, '', cleaned, flags=re.IGNORECASE)
+        pattern = r'\s+' + re.escape(round_type) + r'$'
+        cleaned = re.sub(pattern, '', cleaned, flags=re.IGNORECASE)
+    
+    # Remove any remaining "in" or "for" at the end (common in headlines)
+    cleaned = re.sub(r'\s+(in|for)\s*$', '', cleaned, flags=re.IGNORECASE)
+    
+    # Clean up extra whitespace
+    cleaned = cleaned.strip()
+    
+    # If cleaning resulted in empty string, return original
+    if not cleaned:
+        return company_name.strip()
+    
+    return cleaned
 
 def process_vcnewsdaily(email_text):
     """
@@ -82,13 +155,16 @@ def process_vcnewsdaily(email_text):
                     # Extract company name - it's typically the first part of the line before the verb
                     # Common verbs in these headlines
                     verbs = ["Completes", "Emerges", "Announces", "Scores", "Lands", "Nabs", 
-                            "Secures", "Launches", "Inks", "Scoops", "Raises", "Closes"]
+                            "Secures", "Launches", "Inks", "Scoops", "Raises", "Closes", "Bags", "Grabs"]
                     
                     company_name = line
                     for verb in verbs:
                         if f" {verb} " in line:
                             company_name = line.split(f" {verb} ")[0].strip()
                             break
+                    
+                    # Clean the company name to remove any remaining headline text
+                    company_name = clean_company_name(company_name)
                     
                     # Create the deal dictionary
                     deal = {
@@ -165,7 +241,11 @@ def process_fortune_termsheet(email_text):
             prompt = f"""
             Extract the following information from this startup funding announcement:
             
-            1. Company name
+            1. Company name - IMPORTANT: Extract ONLY the company name itself, not the headline or description. 
+               For example, if the text says "Companyname Bags $50m funding", extract just "Companyname".
+               Do NOT include action verbs like "Bags", "Raises", "Secures", "Grabs", or funding amounts in the company name.
+               The company name should be just the business name (e.g., "Actively AI", not "Actively AI Bags $17.5M Series A").
+            
             2. Funding amount (in USD if available)
             3. Funding round type (be specific: Seed, Pre-Seed, Series A, Series B, etc.)
             4. Vertical (specific business area in 3-7 words)
@@ -207,8 +287,12 @@ def process_fortune_termsheet(email_text):
                     extracted_info = json.loads(json_str)
                     
                     # Create the deal dictionary
+                    company_name = extracted_info.get("company", "")
+                    # Clean the company name to ensure it doesn't contain headline text
+                    company_name = clean_company_name(company_name)
+                    
                     deal = {
-                        "Company": extracted_info.get("company", ""),
+                        "Company": company_name,
                         "Amount": extracted_info.get("amount", ""),
                         "Funding Round": extracted_info.get("funding_round", ""),
                         "Date": datetime.now().strftime("%Y-%m-%d"),
@@ -286,7 +370,11 @@ def process_fresh_funding(email_text):
                 prompt = f"""
                 Extract the following information from this startup funding announcement:
                 
-                1. Company name
+                1. Company name - IMPORTANT: Extract ONLY the company name itself, not the headline or description. 
+                   For example, if the text says "Companyname Bags $50m funding", extract just "Companyname".
+                   Do NOT include action verbs like "Bags", "Raises", "Secures", "Grabs", or funding amounts in the company name.
+                   The company name should be just the business name (e.g., "Actively AI", not "Actively AI Bags $17.5M Series A").
+                
                 2. Funding amount (in USD if available)
                 3. Funding round type (be specific: Seed, Pre-Seed, Series A, Series B, etc.)
                 4. Vertical (specific business area in 3-7 words)
@@ -327,8 +415,12 @@ def process_fresh_funding(email_text):
                     extracted_info = json.loads(json_str)
                     
                     # Create the deal dictionary
+                    company_name = extracted_info.get("company", "")
+                    # Clean the company name to ensure it doesn't contain headline text
+                    company_name = clean_company_name(company_name)
+                    
                     deal = {
-                        "Company": extracted_info.get("company", ""),
+                        "Company": company_name,
                         "Amount": extracted_info.get("amount", ""),
                         "Funding Round": extracted_info.get("funding_round", ""),
                         "Date": datetime.now().strftime("%Y-%m-%d"),
@@ -391,7 +483,11 @@ def process_daily_digest(email_text):
                 prompt = f"""
                 Extract the following information from this startup funding announcement:
                 
-                1. Company name
+                1. Company name - IMPORTANT: Extract ONLY the company name itself, not the headline or description. 
+                   For example, if the text says "Companyname Bags $50m funding", extract just "Companyname".
+                   Do NOT include action verbs like "Bags", "Raises", "Secures", "Grabs", or funding amounts in the company name.
+                   The company name should be just the business name (e.g., "Actively AI", not "Actively AI Bags $17.5M Series A").
+                
                 2. Funding amount (in USD if available)
                 3. Funding round type (be specific: Seed, Pre-Seed, Series A, Series B, etc.)
                 4. Vertical (specific business area in 3-7 words)
@@ -432,8 +528,12 @@ def process_daily_digest(email_text):
                     extracted_info = json.loads(json_str)
                     
                     # Create the deal dictionary
+                    company_name = extracted_info.get("company", "")
+                    # Clean the company name to ensure it doesn't contain headline text
+                    company_name = clean_company_name(company_name)
+                    
                     deal = {
-                        "Company": extracted_info.get("company", ""),
+                        "Company": company_name,
                         "Amount": extracted_info.get("amount", ""),
                         "Funding Round": extracted_info.get("funding_round", ""),
                         "Date": datetime.now().strftime("%Y-%m-%d"),
@@ -614,6 +714,8 @@ def extract_info_from_article(deal, article_text):
 
 def serpapi_search(deal_dict, num_results=10):
     company = deal_dict["Company"]
+    # Clean company name before searching to improve link quality
+    company = clean_company_name(company)
     amount = deal_dict["Amount"]
     round_type = deal_dict["Funding Round"]
     investors = deal_dict["Investors"]
@@ -691,7 +793,9 @@ def pick_best_link(results, company, amount=None, round_type=None):
 def ddg_search(deal_dict):
     
     url = "https://duckduckgo.com/lite/"
-    query = f"{deal_dict['Company']} startup funding"
+    # Clean company name before searching to improve link quality
+    company = clean_company_name(deal_dict['Company'])
+    query = f"{company} startup funding"
     params = {"q": query}
     r = requests.get(url, params=params, headers={"User-Agent": "Mozilla/5.0"})
     soup = BeautifulSoup(r.text, "html.parser")
@@ -732,6 +836,8 @@ def find_link_if_missing(deal):
     
     # Extract key information for search and relevance checking
     company = deal["Company"].strip()
+    # Clean company name before searching to improve link quality
+    company = clean_company_name(company)
     
     # Get funding amount without $ and M/K
     amount = ""
