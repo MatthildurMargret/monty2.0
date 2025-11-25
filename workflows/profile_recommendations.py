@@ -1,596 +1,445 @@
 """
-Recommendations System for Monty
-=================================
+Profile Recommendations System for Monty
+=========================================
 
-This module handles personalized founder/company recommendations sent to team members via Slack.
+This module handles profile/talent recommendations for the weekly update.
 
 Main Functions:
 --------------
-1. send_extra_recs() - Main function to send recommendations to all users
-   - Fetches new recommended profiles from the database
-   - Matches them to each user's areas of interest (from taste_tree.json)
-   - Sends personalized Slack DMs with top 3 recommendations per user
-   - Marks sent recommendations to avoid duplicates (including date/channel metadata)
-
-2. find_new_recs(username) - Preview recommendations for a specific user (testing)
-
-3. mark_prev_recs(...) - Mark profiles as recommended in the database with contextual history
+1. get_profile_recommendations() - Get top 3 filtered profiles for weekly update
+2. mark_profiles_as_recommended() - Track recommended profile IDs to avoid duplicates
+3. format_profile_for_slack() - Format profile data for Slack display with highlights
 
 Usage:
 ------
-To send recommendations to all users:
-    from workflows.recommendations import send_extra_recs
-    send_extra_recs()
+To get profile recommendations:
+    from workflows.profile_recommendations import get_profile_recommendations
+    profiles = get_profile_recommendations(limit=3)
 
-To preview recommendations for a specific user:
-    from workflows.recommendations import find_new_recs
-    find_new_recs("Matthildur")
+To mark profiles as recommended:
+    from workflows.profile_recommendations import mark_profiles_as_recommended
+    mark_profiles_as_recommended(profile_ids)
 
 Requirements:
 ------------
-- SLACK_BOT_TOKEN environment variable must be set
-- Database must have 'founders' table with tree_result and history columns
-- taste_tree.json must have 'montage_lead' metadata for user assignments
+- Aviato API key must be configured
+- data/recommended_profiles.json will be created automatically
 """
 
-import pandas as pd
-import time
+import json
 import os
-import warnings
+import logging
 from datetime import datetime
-from psycopg2 import sql
+from workflows.aviato_processing import search_aviato_profiles, enrich_profiles, filter_relevant_profiles
+from services.openai_api import ask_monty
 
-# Suppress pandas warnings
-warnings.filterwarnings('ignore', category=UserWarning)
-warnings.filterwarnings('ignore', category=pd.errors.SettingWithCopyWarning)
+logger = logging.getLogger(__name__)
 
-# Slack user ID mapping
-user_map = {
-    "Todd": "U03KZ1KQF",
-    "Matt": "U9V59N8R1",
-    "Daphne": "U03L4HK4S",
-    "Connie": "U03JA4UARF1",
-    "Nia": "U04V74ZMZ7F",
-    "Matthildur": "U07MTGUFMSB"
-}
+# Path to the JSON file tracking recommended profiles
+RECOMMENDED_PROFILES_FILE = 'data/recommended_profiles.json'
 
-def find_new_recs(username, test=True):
-    """Find new recommendations for a specific user (for testing/preview purposes).
+def load_recommended_profiles():
+    """Load the list of previously recommended profile IDs from JSON file.
     
-    Args:
-        username: Name of the user to find recommendations for
-        test: If True, only prints recommendations. If False, sends Slack message.
+    Returns:
+        dict: {
+            'profile_ids': [list of profile IDs],
+            'last_updated': timestamp,
+            'total_recommended': count
+        }
     """
-    from services.tree import get_nodes_and_names
-    from services.database import get_db_connection
-    from services.path_mapper import get_all_matching_old_paths
+    if not os.path.exists(RECOMMENDED_PROFILES_FILE):
+        return {
+            'profile_ids': [],
+            'last_updated': None,
+            'total_recommended': 0
+        }
     
-    conn = get_db_connection()
-    if not conn:
-        print("❌ Failed to connect to the database")
-        return None
     try:
-        new_profiles = pd.read_sql(f"""
-        SELECT *
-        FROM founders
-        WHERE founder = true
-        AND history = ''
-        AND (tree_result = 'Strong recommend' OR tree_result = 'Recommend')
-        """, conn)
-        new_profiles = new_profiles.drop_duplicates(subset=['name'])
-        new_profiles = new_profiles.reset_index(drop=True)        
+        with open(RECOMMENDED_PROFILES_FILE, 'r') as f:
+            data = json.load(f)
+            # Ensure all required keys exist
+            if 'profile_ids' not in data:
+                data['profile_ids'] = []
+            if 'total_recommended' not in data:
+                data['total_recommended'] = len(data.get('profile_ids', []))
+            return data
     except Exception as e:
-        print(f"Error fetching new profiles: {e}")
-        return None
-    finally:
-        if conn:
-            conn.close()
-
-    columns_to_share = ['name', 'company_name', 'company_website', 'profile_url', 'tree_thesis', 'product', 'market', 'tree_path', 'past_success_indication_score', 'tree_result']
-    recs = new_profiles[columns_to_share].copy()
-    recs = recs.drop_duplicates(subset=['company_name'])
-    recs = recs.drop_duplicates(subset=['name'])
-    recs = recs.drop_duplicates(subset=['profile_url'])
-    recs = recs.reset_index(drop=True)
-
-    nodes_and_names = get_nodes_and_names()
-
-    recs['top_category'] = recs['tree_path'].apply(lambda x: x.split(' > ')[0] if pd.notna(x) else '')
-
-    for user, categories in nodes_and_names.items():
-        if user != username:
-            continue
-        print(f"\nProfiles for {user}")
-        print("-" * 60)
-        
-        profiles = pd.DataFrame()
-        for category in categories:
-            # Get all old paths that map to this new category
-            old_paths = get_all_matching_old_paths(category)
-            
-            # Match profiles using both new and old paths
-            # First try new path (for any newly categorized profiles)
-            matching = recs[recs['tree_path'].str.contains(category, na=False, regex=False)]
-            
-            # Then match using old paths (for existing database entries)
-            for old_path in old_paths:
-                old_matching = recs[recs['tree_path'].str.contains(old_path, na=False, regex=False)]
-                matching = pd.concat([matching, old_matching])
-            
-            # Remove duplicates and add to profiles
-            matching = matching.drop_duplicates(subset=['name', 'company_name'])
-            profiles = pd.concat([profiles, matching])
-        
-        if len(profiles) == 0:
-            print(f"No matching profiles found for {user}")
-            return
-        
-        profiles['category'] = profiles['tree_path'].apply(lambda x: x.split(' > ')[-2] if len(x.split(' > ')) > 1 else x)
-
-        # Get top profile from each category
-        profiles = profiles.groupby('category').head(1)
-
-        profiles = profiles.drop_duplicates(subset=['company_name'])
-        profiles = profiles.drop_duplicates(subset=['name'])
-        profiles = profiles.reset_index(drop=True)
-        profiles.sort_values(by=['tree_result', 'past_success_indication_score'], ascending=[False, False], inplace=True)
-        
-        # Take top 3
-        profiles = profiles.head(3)
-
-        print(f"Found {len(profiles)} recommendations:\n")
-        
-        # Build category string for greeting
-        categories_mentioned = profiles['tree_path'].unique()
-        category_string = ""
-        for category in categories_mentioned:
-            last_node = category.split(' > ')[-2] if len(category.split(' > ')) > 1 else category.split(' > ')[0]
-            category_string += f"{last_node}, "
-        category_string = category_string[:-2]  # Remove trailing comma
-        
-        # Build Slack message
-        greeting_text = f"Hey {user}! I came across these profiles in {category_string} that I wanted to share with you."
-        message_lines = [greeting_text]
-        
-        for _, row in profiles.iterrows():
-            # Format each recommendation
-            line = (
-                f"• <{fix_profile_url(row['profile_url'])}|*{row['name']}*> at {fix_company_url(row['company_website'], row['company_name'])}\n"
-                f"    {row['product']}"
-            )
-            message_lines.append(line)
-            
-            # Print to console
-            profile_link = fix_profile_url(row['profile_url'])
-            print(f"  - {row['name']} at {row['company_name']} ({row['tree_result']})")
-            print(f"    Profile: {profile_link}")
-            print(f"    Category: {row['tree_path']}")
-            print()
-        
-        message = "\n\n".join(message_lines)
-        
-        # Send message if not in test mode
-        user_id = user_map.get(user)
-        if user_id:
-            if test:
-                print("=" * 60)
-                print("TEST MODE - Message preview:")
-                print("=" * 60)
-                print(message)
-                print("=" * 60)
-                print("Won't send Slack message (test=True)")
-            else:
-                print("=" * 60)
-                print(f"Sending Slack message to {user} ({user_id})")
-                send_slack_dm(user_id, message)
-                print("✅ Message sent!")
-        else:
-            print(f"⚠️  No Slack user ID found for {user}")
+        logger.error(f"Error loading recommended profiles: {e}")
+        return {
+            'profile_ids': [],
+            'last_updated': None,
+            'total_recommended': 0
+        }
 
 
-def fix_profile_url(url):
-    """Ensure LinkedIn profile URL is properly formatted."""
-    if not url:
-        return "#"
-    if not url.startswith('http'):
-        return f"https://{url}"
-    return url
-
-
-def fix_company_url(url, company_name):
-    """Format company URL for Slack display."""
-    if not url or url == '' or pd.isna(url):
-        return company_name
-    if not url.startswith('http'):
-        url = f"https://{url}"
-    return f"<{url}|*{company_name}*>"
-
-
-def send_slack_dm(user_id, message):
-    """Send a direct message to a Slack user.
+def save_recommended_profiles(data):
+    """Save the list of recommended profile IDs to JSON file.
     
     Args:
-        user_id: Slack user ID (e.g., 'U07MTGUFMSB')
-        message: Message text to send
+        data: Dictionary with profile_ids list and metadata
     """
-    from slack_sdk import WebClient
-    from slack_sdk.errors import SlackApiError
-    
-    slack_token = os.getenv("SLACK_BOT_TOKEN")
-    if not slack_token:
-        print("❌ SLACK_BOT_TOKEN not found in environment")
-        return False
-    
-    client = WebClient(token=slack_token)
-    
     try:
-        response = client.chat_postMessage(
-            channel=user_id,
-            text=message
-        )
-        return True
-    except SlackApiError as e:
-        print(f"❌ Error sending Slack message: {e.response['error']}")
-        return False
+        # Ensure data directory exists
+        os.makedirs('data', exist_ok=True)
+        
+        with open(RECOMMENDED_PROFILES_FILE, 'w') as f:
+            json.dump(data, f, indent=2)
+        logger.info(f"Saved {len(data['profile_ids'])} recommended profile IDs")
+    except Exception as e:
+        logger.error(f"Error saving recommended profiles: {e}")
 
 
-def mark_prev_recs(names=None, companies=None, history_entries=None, channel=None, send_date=None):
-    """Mark profiles as 'recommended' in the database and annotate context metadata.
+def mark_profiles_as_recommended(profile_ids):
+    """Mark profiles as recommended by adding their IDs to the tracking file.
     
     Args:
-        names: Optional list of founder names to mark (legacy support)
-        companies: Optional list of company names to mark (legacy support)
-        history_entries: Optional list of dict entries with keys:
-            - name: founder name (optional if company provided)
-            - company: company name (optional if name provided)
-            - channel: channel label (e.g., 'slack', 'newsletter')
-            - recipients: list/iterable or string of recipients (for slack DMs)
-            - context_detail: explicit detail string to append inside parentheses
-            - send_date: explicit date string or datetime; defaults to today
-        channel: Default channel used when history_entries not provided
-        send_date: Default date (datetime or string YYYY-MM-DD). Defaults to today.
+        profile_ids: List of profile IDs to mark as recommended
     """
-    from services.database import get_db_connection
-    
-    if not names and not companies and not history_entries:
-        print("No names or companies provided to mark")
+    if not profile_ids:
+        logger.warning("No profile IDs provided to mark as recommended")
         return
     
-    def format_date(value):
-        if isinstance(value, datetime):
-            return value.strftime("%Y-%m-%d")
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-        return datetime.utcnow().strftime("%Y-%m-%d")
+    data = load_recommended_profiles()
     
-    def normalize_recipients(value):
-        if not value:
-            return []
-        if isinstance(value, str):
-            return [value]
-        return [str(v) for v in value if v]
+    # Add new IDs (avoiding duplicates)
+    existing_ids = set(data['profile_ids'])
+    new_ids = [pid for pid in profile_ids if pid not in existing_ids]
     
-    def format_detail(channel_value, recipients_list, context_detail):
-        if context_detail:
-            return context_detail
-        detail_parts = []
-        recipients_list = [r for r in recipients_list if r]
-        channel_value = channel_value.strip().lower() if isinstance(channel_value, str) else None
-        if channel_value:
-            if recipients_list:
-                recipients_text = ", ".join(recipients_list)
-                detail_parts.append(f"{channel_value} to {recipients_text}")
-            else:
-                detail_parts.append(channel_value)
-        elif recipients_list:
-            detail_parts.append(f"to {', '.join(recipients_list)}")
-        return ", ".join(detail_parts) if detail_parts else ""
-    
-    send_date_default = format_date(send_date)
-    
-    entries_to_process = []
-    if history_entries:
-        for entry in history_entries:
-            entry = entry or {}
-            entry_name = entry.get('name')
-            entry_company = entry.get('company')
-            if not entry_name and not entry_company:
-                continue
-            entry_channel = entry.get('channel', channel)
-            entry_recipients = normalize_recipients(entry.get('recipients') or entry.get('recipient'))
-            entry_detail = entry.get('context_detail')
-            entry_date = format_date(entry.get('send_date') or send_date_default)
-            entries_to_process.append({
-                'name': entry_name,
-                'company': entry_company,
-                'channel': entry_channel,
-                'recipients': entry_recipients,
-                'detail': entry_detail,
-                'send_date': entry_date
-            })
+    if new_ids:
+        data['profile_ids'].extend(new_ids)
+        data['last_updated'] = datetime.now().isoformat()
+        data['total_recommended'] = len(data['profile_ids'])
+        
+        save_recommended_profiles(data)
+        logger.info(f"Marked {len(new_ids)} new profiles as recommended (total: {data['total_recommended']})")
     else:
-        unique_names = set(names or [])
-        unique_companies = set(companies or [])
-        for n in unique_names:
-            entries_to_process.append({
-                'name': n,
-                'channel': channel,
-                'recipients': [],
-                'detail': None,
-                'send_date': send_date_default
-            })
-        for c in unique_companies:
-            entries_to_process.append({
-                'company': c,
-                'channel': channel,
-                'recipients': [],
-                'detail': None,
-                'send_date': send_date_default
-            })
+        logger.info("All provided profile IDs were already marked as recommended")
+
+
+def select_best_profiles_with_ai(profiles, target_count=3):
+    """Use AI to select the most relevant profiles for fintech, healthcare, or commerce.
     
-    if not entries_to_process:
-        print("No valid entries to process for marking recommendations.")
-        return
+    Args:
+        profiles: List of profile dictionaries
+        target_count: Number of profiles to select (default: 3)
     
-    # Get database connection
-    conn = get_db_connection()
-    if not conn:
-        print("❌ Failed to connect to the database")
-        return
+    Returns:
+        list: Selected profiles
+    """
+    if len(profiles) <= target_count:
+        return profiles
+
+    return profiles[:target_count]
+    
+    # Build context for each profile
+    profile_summaries = []
+    for i, profile in enumerate(profiles):
+        name = profile.get('fullName', 'Unknown')
+        headline = profile.get('headline', 'No headline')
+        location = profile.get('location', 'Unknown')
         
+        # Get experience data
+        experiences = profile.get('experience', [])
+        experience_summary = []
+        for exp in experiences[:3]:  # Top 3 experiences
+            if isinstance(exp, dict):
+                title = exp.get('title', '')
+                company = exp.get('companyName', '')
+                if title and company:
+                    experience_summary.append(f"{title} at {company}")
+        
+        # Get skills
+        skills = profile.get('skills', [])
+        if isinstance(skills, list):
+            skills_list = [s.get('name', s) if isinstance(s, dict) else str(s) for s in skills[:10]]
+            skills_text = ", ".join(skills_list) if skills_list else "No skills listed"
+        else:
+            skills_text = "No skills listed"
+        
+        profile_summaries.append(f"""
+Profile {i+1}: {name}
+Current: {headline}
+Location: {location}
+Recent Experience: {'; '.join(experience_summary) if experience_summary else 'Not available'}
+Skills: {skills_text}
+""")
+    
+    # Create prompt for AI
+    prompt = """You are an expert VC analyst at Montage Ventures. We focus EXCLUSIVELY on early-stage investments in three verticals:
+
+**FINTECH**: Payments, banking, lending, insurance, wealth management, accounting, financial infrastructure, crypto/blockchain
+**HEALTHCARE**: Digital health, healthtech, biotech, medical devices, health insurance, telehealth, clinical software, health data
+**COMMERCE**: E-commerce, retail tech, marketplaces, supply chain, logistics, DTC brands, B2B commerce, point-of-sale
+
+Your task: Select the 3 profiles with the STRONGEST and MOST DIRECT relevance to one of these three verticals. 
+
+Selection criteria (in order of importance):
+1. **Direct vertical experience**: Has worked at major companies in fintech/healthcare/commerce OR founded a startup in these spaces
+   - Fintech examples: Stripe, Square, Plaid, Robinhood, Coinbase, PayPal, Affirm
+   - Healthcare examples: Oscar Health, Ro, Hims, One Medical, 23andMe, Tempus
+   - Commerce examples: Shopify, Amazon, Instacart, DoorDash, Faire, Flexport
+2. **Relevant skills**: Product/engineering skills specifically applied to fintech, healthcare, or commerce problems
+3. **Location**: SF Bay Area strongly preferred
+
+EXCLUDE profiles that:
+- Work in general tech infrastructure (networking, cloud, DevOps) without vertical focus
+- Are in unrelated industries (deep tech, general AI/ML without vertical application)
+- Have only generic "big tech" experience without vertical relevance
+
+Return your response in this exact JSON format:
+{
+  "selections": [
+    {
+      "profile_number": 1,
+      "vertical": "fintech|healthcare|commerce",
+      "reason": "Brief 1-sentence reason explaining their DIRECT relevance to the vertical"
+    }
+  ]
+}"""
+
+    data = "\n".join(profile_summaries)
+    
     try:
-        cur = conn.cursor()
-        total_updates = 0
-        for table_name in ["founders", "stealth_founders"]:
-            for entry in entries_to_process:
-                conditions = []
-                params = []
-                if entry.get('name'):
-                    conditions.append(sql.SQL("name = %s"))
-                    params.append(entry['name'])
-                if entry.get('company'):
-                    conditions.append(sql.SQL("company_name = %s"))
-                    params.append(entry['company'])
-                if not conditions:
-                    continue
-                
-                detail_text = format_detail(entry.get('channel'), entry.get('recipients'), entry.get('detail'))
-                history_value = f"recommended ({entry.get('send_date')}"
-                if detail_text:
-                    history_value += f", {detail_text}"
-                history_value += ")"
+        logger.info("Using AI to select best profiles...")
+        response = ask_monty(prompt, data, max_tokens=500)
+        
+        # Parse JSON response
+        import json
+        import re
+        
+        try:
+            # Clean markdown fences and whitespace
+            clean_response = response.strip()
+            clean_response = re.sub(r"```(?:json)?", "", clean_response).strip()
 
-                query = sql.SQL("UPDATE {} SET history = %s WHERE ").format(sql.Identifier(table_name))
-                query = query + sql.SQL(" OR ").join(conditions)
-                cur.execute(query, [history_value] + params)
-                total_updates += cur.rowcount
-        print(f"Updated {total_updates} records across founders tables.")
-        conn.commit()
-        print(f"✅ Successfully marked profiles as recommended with context.")
+            # Try to find the first JSON object (non-greedy)
+            json_match = re.search(r"\{.*?\}", clean_response, re.DOTALL)
+            if json_match:
+                json_text = json_match.group(0)
+                result = json.loads(json_text)
+                selections = result.get("selections", [])
+            else:
+                raise ValueError("No JSON object found in response")
+
+            selected_profiles = []
+            for selection in selections[:target_count]:
+                idx = selection.get('profile_number', 0) - 1
+                if 0 <= idx < len(profiles):
+                    profile = profiles[idx].copy()
+                    profile['ai_vertical'] = selection.get('vertical', 'general')
+                    profile['ai_reason'] = selection.get('reason', '')
+                    selected_profiles.append(profile)
+
+            if selected_profiles:
+                logger.info(f"AI selected {len(selected_profiles)} profiles with reasoning")
+                return selected_profiles
+
+        except Exception as e:
+            logger.warning(f"Could not parse JSON ({e}), trying fallback parsing")
+            # Fallback to top profiles if AI output invalid
+            logger.warning("AI selection failed, falling back to top profiles")
+            return profiles[:target_count]
+            
     except Exception as e:
-        print(f"❌ Error updating records: {e}")
-        conn.rollback()
-    finally:
-        if 'cur' in locals():
-            cur.close()
-        if conn:
-            conn.close()
+        logger.error(f"Error in AI selection: {e}")
+        return profiles[:target_count]
 
 
-def send_extra_recs(test=True):
-    """Send personalized recommendations to all Slack users based on their interests.
+def get_profile_recommendations(limit=3, search_filters=None):
+    """Get top profile recommendations for the weekly update.
     
     This function:
-    1. Fetches new recommended profiles from the database
-    2. Matches them to each user's areas of interest (from the taste tree)
-    3. Sends personalized Slack DMs with top 3 recommendations per user
-    4. Marks sent recommendations to avoid duplicates
+    1. Searches for profiles using specified filters
+    2. Enriches the profiles with full data
+    3. Filters based on required highlights
+    4. Excludes previously recommended profiles
+    5. Gets top 20 candidates
+    6. Uses AI to select the most relevant N profiles for fintech/healthcare/commerce
+    7. Returns the AI-selected profiles
+    
+    Args:
+        limit: Number of profiles to return (default: 3)
+        search_filters: Custom search filters (optional). If None, uses default filters.
+    
+    Returns:
+        list: List of profile dictionaries with full enriched data, AI-selected for relevance
     """
-    from services.tree import get_nodes_and_names
-    from services.database import get_db_connection
-    from services.path_mapper import get_all_matching_old_paths
+    # Default search filters
+    if search_filters is None:
+        search_filters = {
+            "region": "California",
+            "country": "United States",
+            "computed_potentialToLeave": True,
+            "computed_priorBackedFounder": True,
+            "sort": [{"computed_likelyToExplore": {"order": "desc"}}],
+            "computed_recentlyLeftCompany": False,
+            "limit": 100  # Get more results to filter from
+        }
     
-    conn = get_db_connection()
-    if not conn:
-        print("❌ Failed to connect to the database")
-        return None
+    logger.info("Searching for profile recommendations...")
     
-    try:
-        # Fetch all new profiles that are recommended but haven't been sent yet
-        new_profiles = pd.read_sql("""
-        SELECT *
-        FROM founders
-        WHERE founder = true
-        AND history = ''
-        AND (tree_result = 'Strong recommend' OR tree_result = 'Recommend')
-        """, conn)
-        new_profiles = new_profiles.drop_duplicates(subset=['name'])
-        new_profiles = new_profiles.reset_index(drop=True)
-        
-        print(f"Found {len(new_profiles)} new recommended profiles")
-        
-    except Exception as e:
-        print(f"❌ Error fetching new profiles: {e}")
-        return None
-    finally:
-        if conn:
-            conn.close()
+    # Step 1: Search for profiles
+    results = search_aviato_profiles(search_filters)
     
-    # Select relevant columns
-    columns_to_share = ['name', 'company_name', 'company_website', 'profile_url', 
-                       'tree_thesis', 'product', 'market', 'tree_path', 
-                       'past_success_indication_score', 'tree_result']
-    recs = new_profiles[columns_to_share].copy()  # Use .copy() to avoid SettingWithCopyWarning
+    if not results or "items" not in results:
+        logger.error("No results found from profile search")
+        return []
     
-    # Remove duplicates
-    recs = recs.drop_duplicates(subset=['company_name'])
-    recs = recs.drop_duplicates(subset=['name'])
-    recs = recs.drop_duplicates(subset=['profile_url'])
-    recs = recs.reset_index(drop=True)
+    profiles = results["items"]
+    logger.info(f"Found {len(profiles)} profiles from search")
     
-    print(f"After deduplication: {len(recs)} unique profiles")
+    # Step 2: Enrich profiles
+    ids = [item["id"] for item in profiles]
+    enriched = enrich_profiles(ids)
+    logger.info(f"Enriched {len(enriched)} profiles")
     
-    # Get user interest mappings from the taste tree
-    nodes_and_names = get_nodes_and_names()
+    if not enriched:
+        logger.error("No enriched profiles returned")
+        return []
     
-    # Add top category for filtering
-    recs['top_category'] = recs['tree_path'].apply(lambda x: x.split(' > ')[0] if pd.notna(x) else '')
+    # Step 3: Filter by required highlights
+    required_highlights = ['potentialToLeave', 'priorBackedFounder']
+    optional_highlights = ['bigTechAlumPrivate', 'bigTechAlumPublic']
     
-    all_names = []
-    companies = []
-    history_entries_map = {}
-    send_date_str = datetime.utcnow().strftime("%Y-%m-%d")
+    filtered = filter_relevant_profiles(enriched, required_highlights, optional_highlights)
+    logger.info(f"Filtered to {len(filtered)} profiles with required highlights")
     
-    # Process each user
-    for user, categories in nodes_and_names.items():
-        print(f"\nProcessing recommendations for {user}")
-        
-        # Filter profiles matching this user's categories
-        profiles = pd.DataFrame()
-        for category in categories:
-            # Get all old paths that map to this new category
-            old_paths = get_all_matching_old_paths(category)
-            
-            # Match profiles using both new and old paths
-            # First try new path (for any newly categorized profiles)
-            matching = recs[recs['tree_path'].str.contains(category, na=False, regex=False)]
-            
-            # Then match using old paths (for existing database entries)
-            for old_path in old_paths:
-                old_matching = recs[recs['tree_path'].str.contains(old_path, na=False, regex=False)]
-                matching = pd.concat([matching, old_matching])
-            
-            # Remove duplicates before adding to profiles
-            matching = matching.drop_duplicates(subset=['name', 'company_name'])
-            profiles = pd.concat([profiles, matching])
-        
-        if len(profiles) == 0:
-            print(f"  ⚠️  No matching profiles found for {user}")
-            continue
-        
-        # Extract category for grouping
-        profiles['category'] = profiles['tree_path'].apply(
-            lambda x: x.split(' > ')[-2] if len(x.split(' > ')) > 1 else x
-        )
-        
-        # Get top profile from each category
-        profiles = profiles.groupby('category').head(1)
-        
-        # Remove duplicates
-        profiles = profiles.drop_duplicates(subset=['company_name'])
-        profiles = profiles.drop_duplicates(subset=['name'])
-        profiles = profiles.reset_index(drop=True)
-        
-        # Sort by recommendation strength and success score
-        profiles.sort_values(
-            by=['tree_result', 'past_success_indication_score'], 
-            ascending=[False, False], 
-            inplace=True
-        )
-        
-        # Take top 3 recommendations
-        profiles = profiles.head(3)
-        
-        if len(profiles) == 0:
-            print(f"No profiles left after filtering for {user}")
-            continue
-        
-        # Track sent recommendations
-        all_names.extend(profiles['name'].tolist())
-        companies.extend(profiles['company_name'].tolist())
-        
-        # Build category string for greeting
-        categories_mentioned = profiles['tree_path'].unique()
-        category_string = ""
-        for category in categories_mentioned:
-            last_node = category.split(' > ')[-2] if len(category.split(' > ')) > 1 else category.split(' > ')[0]
-            category_string += f"{last_node}, "
-        category_string = category_string[:-2].lower()  # Remove trailing comma
-        
-        # Build Slack message
-        greeting_text = f"Hey {user}! I came across these profiles in {category_string} that I wanted to share with you."
-        message_lines = [greeting_text]
-        
-        print(greeting_text)
-        
-        for _, row in profiles.iterrows():
-            # Format each recommendation
-            line = (
-                f"• <{fix_profile_url(row['profile_url'])}|*{row['name']}*> at {fix_company_url(row['company_website'], row['company_name'])}\n"
-                f"    {row['product']}"
-            )
-            message_lines.append(line)
-            # Print with profile URL for easy access
-            profile_link = fix_profile_url(row['profile_url'])
-            print(f"    - {row['name']} at {row['company_name']} ({row['tree_result']})")
-            print(f"      Profile: {profile_link}")
-            
-            entry_key = (row['name'], row['company_name'])
-            entry = history_entries_map.setdefault(
-                entry_key,
-                {
-                    'name': row['name'] if pd.notna(row['name']) else None,
-                    'company': row['company_name'] if pd.notna(row['company_name']) else None,
-                    'channel': 'slack',
-                    'recipients': set(),
-                    'send_date': send_date_str
-                }
-            )
-            entry['recipients'].add(user)
-        
-        message = "\n\n".join(message_lines)
-        
-        # Remove profiles from the pool so they're not sent to other users
-        recs = recs[~recs['company_name'].isin(profiles['company_name'])]
-        
-        # Send the message
-        user_id = user_map.get(user)
-        if user_id:
-            if test:
-                print("Won't send anything yet")
-            else:
-                print(f"Sending to Slack user {user_id}")
-                send_slack_dm(user_id, message)
-                time.sleep(2)  # Rate limiting
-        else:
-            print(f"No Slack user ID found for {user}")
+    if not filtered:
+        logger.warning("No profiles matched the highlight criteria")
+        return []
     
-    # Mark all sent recommendations in the database
-    if all_names or companies:
-        history_entries = []
-        for entry in history_entries_map.values():
-            entry['recipients'] = sorted(list(entry['recipients']))
-            history_entries.append(entry)
-        if test:
-            print("Won't mark anything as recommended")
-        else:
-            print(f"Marking {len(set(all_names))} profiles as recommended")
-            mark_prev_recs(history_entries=history_entries)
+    # Step 4: Exclude previously recommended profiles
+    recommended_data = load_recommended_profiles()
+    previously_recommended = set(recommended_data['profile_ids'])
     
-    print("Recommendation sending complete!")
+    new_profiles = [p for p in filtered if p.get('id') not in previously_recommended]
+    logger.info(f"After excluding {len(previously_recommended)} previously recommended, {len(new_profiles)} profiles remain")
+    
+    if not new_profiles:
+        logger.warning("All filtered profiles have been previously recommended")
+        return []
+    
+    # Step 5: Get top 20 candidates for AI selection
+    top_candidates = new_profiles[:20]
+    logger.info(f"Selected top {len(top_candidates)} candidates for AI evaluation")
+    
+    # Step 6: Use AI to select the best N profiles
+    selected_profiles = select_best_profiles_with_ai(top_candidates, target_count=limit)
+    logger.info(f"AI selected {len(selected_profiles)} final profile recommendations")
+    
+    return selected_profiles
 
 
-def main():
-    """Main function to send recommendations."""
+def format_profile_for_slack(profile, include_highlights=True):
+    """Format a profile for Slack display with highlights explanation.
     
-    print("=" * 60)
-    print("Monty Recommendations System")
-    print("=" * 60)
+    Args:
+        profile: Profile dictionary from enriched API data
+        include_highlights: Whether to include the highlights explanation
     
-    # Option 1: Preview recommendations for a specific user (testing)
-    ##print("\n📋 Preview Mode - Testing recommendations for Matthildur:")
-    #print("-" * 60)
-    #find_new_recs("Matthildur", test=False)
+    Returns:
+        str: Formatted Slack message block for the profile
+    """
+    name = profile.get('fullName', 'Unknown')
+    headline = profile.get('headline', 'No headline')
+    location = profile.get('location', 'Unknown location')
     
-    # Option 2: Send recommendations to all users
-    # Uncomment the lines below when ready to send to everyone
-    print("\n📧 Sending recommendations to all users:")
-    print("-" * 60)
-    send_extra_recs(test=True)
+    # Get LinkedIn URL
+    urls = profile.get('URLs', {})
+    linkedin_url = urls.get('linkedin', '')
+    if linkedin_url and not linkedin_url.startswith('http'):
+        linkedin_url = f"https://{linkedin_url}"
     
-    print("\n" + "=" * 60)
-    print("✅ Done!")
-    print("=" * 60)
+    # Build the main profile line
+    if linkedin_url:
+        profile_line = f"• <{linkedin_url}|*{name}*>"
+    else:
+        profile_line = f"• *{name}*"
+    
+    # Add headline and location
+    profile_line += f"\n    {headline}"
+    profile_line += f"\n    📍 {location}"
+    
+    # Add highlights explanation if requested
+    if include_highlights:
+        highlights = profile.get('computed_highlightList', [])
+        
+        # Build highlights explanation
+        highlight_parts = []
+        
+        if 'potentialToLeave' in highlights:
+            highlight_parts.append("showing signs of being open to new opportunities")
+        
+        if 'priorBackedFounder' in highlights:
+            highlight_parts.append("previously founded a VC-backed company")
+        
+        if 'bigTechAlumPublic' in highlights:
+            highlight_parts.append("worked at a major public tech company")
+        elif 'bigTechAlumPrivate' in highlights:
+            highlight_parts.append("worked at a major private tech company")
+        
+        if 'employeeDuringIPO' in highlights:
+            highlight_parts.append("experienced an IPO")
+        
+        if 'unicornEarlyEngineer' in highlights:
+            highlight_parts.append("early engineer at a unicorn")
+        
+        if 'topUniversity' in highlights:
+            highlight_parts.append("attended a top university")
+        
+        if highlight_parts:
+            highlights_text = ", ".join(highlight_parts)
+            profile_line += f"\n    _Why: {highlights_text}_"
+    
+    return profile_line
 
+
+def format_profiles_for_weekly_update(profiles):
+    """Format multiple profiles for the weekly update Slack message.
+    
+    Args:
+        profiles: List of profile dictionaries
+    
+    Returns:
+        str: Formatted Slack message with all profiles
+    """
+    if not profiles:
+        return ""
+    
+    message_parts = [
+        "Here are some interesting profiles we came across this week:\n"
+    ]
+    
+    for profile in profiles:
+        formatted = format_profile_for_slack(profile, include_highlights=True)
+        message_parts.append(formatted)
+    
+    return "\n\n".join(message_parts)
+
+
+# For testing/debugging
 if __name__ == "__main__":
-    main()
+    logging.basicConfig(level=logging.INFO)
+    
+    print("Testing profile recommendations system...")
+    print("=" * 80)
+    
+    # Get recommendations
+    profiles = get_profile_recommendations(limit=3)
+    
+    if profiles:
+        print(f"\n✅ Found {len(profiles)} recommendations:\n")
+        
+        # Format for display
+        message = format_profiles_for_weekly_update(profiles)
+        print(message)
+        
+        # Show what would be marked as recommended
+        profile_ids = [p['id'] for p in profiles]
+        print("\n" + "=" * 80)
+        print(f"Would mark these {len(profile_ids)} profile IDs as recommended:")
+        for pid in profile_ids:
+            print(f"  - {pid}")
+    else:
+        print("❌ No recommendations found")
