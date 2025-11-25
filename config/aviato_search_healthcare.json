@@ -1,0 +1,356 @@
+{
+    "search_filters": [
+      {
+        "name": "healthcare",
+        "description": "Healthcare",
+        "source": "Healthcare Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Healthcare", "Health Care"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "biotech",
+        "description": "Biotechnology",
+        "source": "Biotech Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Biotechnology"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "genetics",
+        "description": "Genetics",
+        "source": "Genetics Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Genetics"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "pharmaceuticals",
+        "description": "Pharmaceuticals",
+        "source": "Pharmaceuticals Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Pharmaceuticals"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "digital_health",
+        "description": "Digital Health",
+        "source": "Digital Health Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Digital Health"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "health & wellness",
+        "description": "Health & Wellness",
+        "source": "Health & Wellness Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Beauty", "Fitness", "Personal Health", "Wellness"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "health information technology",
+        "description": "Health Information Technology",
+        "source": "Health Information Technology Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Health Information Technology"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "medical",
+        "description": "Medical",
+        "source": "Medical Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Medical"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "health diagnostics",
+        "description": "Health Diagnostics",
+        "source": "Health Diagnostics Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Health Diagnostics"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "hospital",
+        "description": "Hospital",
+        "source": "Hospital Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Hospital", "Hospitals and Health Care"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "medical device",
+        "description": "Medical Device",
+        "source": "Medical Device Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Medical Device", "Medical Equipment Manufacturing"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "therapeutics",
+        "description": "Therapeutics",
+        "source": "Therapeutics Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Therapeutics", "Therapeutic Devices"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "medical practices",
+        "description": "Medical Practices",
+        "source": "Medical Practices Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Medical Practices", "Clinics/Outpatient Services", "Outpatient Care"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "mental health",
+        "description": "Mental Health",
+        "source": "Mental Health Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Mental Health", "Mental Health Care"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "dental",
+        "description": "Dental",
+        "source": "Dental Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Dental"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "veterinary",
+        "description": "Veterinary",
+        "source": "Veterinary Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Veterinary", "Veterinary Services"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "rehabilitation",
+        "description": "Rehabilitation",
+        "source": "Rehabilitation Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Rehabilitation"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "elder care",
+        "description": "Elder Care",
+        "source": "Elder Care Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Elder Care", "Assisted Living", "Nursing and Residential Care"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "home health care",
+        "description": "Home Health Care",
+        "source": "Home Health Care Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Home Health Care"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "child care",
+        "description": "Child Care",
+        "source": "Child Care Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Child Care"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "pharmaceutical",
+        "description": "Pharmaceutical",
+        "source": "Pharmaceutical Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Pharmaceutical", "Pharmaceutical Manufacturing"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "biopharma",
+        "description": "Biopharma",
+        "source": "Biopharma Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Biopharma", "Drug Discovery"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "clinical trials",
+        "description": "Clinical Trials",
+        "source": "Clinical Trials Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Clinical Trials", "Biotechnology Research"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "medical supplies",
+        "description": "Medical Supplies",
+        "source": "Medical Supplies Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Medical Supplies", "Surgical Devices"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "telehealth",
+        "description": "Telehealth",
+        "source": "Telehealth Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Telehealth", "Telemedicine", "mHealth"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "ehr",
+        "description": "EHR",
+        "source": "EHR Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Electronic Health Record (EHR)", "Healthcare IT"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "wellnessservices",
+        "description": "Wellness Services",
+        "source": "Wellness Services Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Wellness and Fitness Services"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "nutrition",
+        "description": "Nutrition",
+        "source": "Nutrition Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Nutrition"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "oncology",
+        "description": "Oncology",
+        "source": "Oncology Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Oncology"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "precision medicine",
+        "description": "Precision Medicine",
+        "source": "Precision Medicine Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Precision Medicine", "Genomics", "Life Sciences"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "laboratory services",
+        "description": "Laboratory Services",
+        "source": "Laboratory Services Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Laboratory Services (Healthcare)"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "primary care",
+        "description": "Primary Care",
+        "source": "Primary Care Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Primary and Urgent Care"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      }
+    ]
+  }

@@ -1,0 +1,246 @@
+{
+    "search_filters": [
+      {
+        "name": "ecommerce",
+        "description": "E-commerce",
+        "source": "E-commerce Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["E-Commerce"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "retail",
+        "description": "Retail",
+        "source": "Retail Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Retail"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "retail",
+        "description": "Retail",
+        "source": "Retail Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Retail Technology"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "advertising",
+        "description": "Advertising",
+        "source": "Advertising Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Advertising"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "content marketing",
+        "description": "Content Marketing",
+        "source": "Content Marketing Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Content Marketing"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "content marketing",
+        "description": "Content Marketing",
+        "source": "Content Marketing Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Content", "Content Marketing", "Digital Marketing"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "retail",
+        "description": "Retail",
+        "source": "Retail Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Consumer", "Consumer Goods", "Consumer Technology"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "materials",
+        "description": "Materials",
+        "source": "Materials Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Materials", "Supply Chain Management"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "industrials",
+        "description": "Industrials",
+        "source": "Industrials Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Industrial", "Industrial Automation"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "wholesale",
+        "description": "Wholesale",
+        "source": "Wholesale Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Wholesale", "Commercial", "Distributors/Wholesale"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "travel",
+        "description": "Travel",
+        "source": "Travel Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Travel"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "food and beverage",
+        "description": "Food and Beverage",
+        "source": "Food and Beverage Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Food and Beverage", "Food Products", "Food Processing"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "food delivery",
+        "description": "Food Delivery",
+        "source": "Food Delivery Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Food Delivery", "Grocery", "Food and Beverage Services"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "fashion",
+        "description": "Fashion",
+        "source": "Fashion Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Fashion", "Retail Apparel and Fashion", "Apparel"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "beauty",
+        "description": "Beauty",
+        "source": "Beauty Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Beauty", "Cosmetics", "Personal Care Product Manufacturing"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "marketplace",
+        "description": "Marketplace",
+        "source": "Marketplace Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Marketplace", "E-Commerce Platforms", "Shopping"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "internet retail",
+        "description": "Internet Retail",
+        "source": "Internet Retail Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Internet Retail", "Specialty Retail"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "consumer electronics",
+        "description": "Consumer Electronics",
+        "source": "Consumer Electronics Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Consumer Electronics", "Consumer Services"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "payments",
+        "description": "Payments",
+        "source": "Payments Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Payments", "Mobile Payments", "Point of Sale"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "subscription",
+        "description": "Subscription",
+        "source": "Subscription Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Subscription Service"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "procurement",
+        "description": "Procurement",
+        "source": "Procurement Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Procurement", "Inventory Management"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "lastmile",
+        "description": "Last Mile",
+        "source": "Last Mile Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Last Mile Transportation", "Logistics"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      }
+    ]
+  }

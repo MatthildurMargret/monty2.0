@@ -1,0 +1,194 @@
+{
+    "search_filters": [
+      {
+        "name": "fintech",
+        "description": "Financial technology, payments, insurance, and security companies",
+        "source": "Fintech & Financial Services Search",
+        "filter": {
+          "region": "California",
+          "industryList": ["FinTech"]
+        }
+      },
+      {
+        "name": "finance",
+        "description": "Financial technology, payments, insurance, and security companies",
+        "source": "Finance Search",
+        "filter": {
+          "region": "California",
+          "industryList": ["Finance"]
+        }
+      },
+      {
+        "name": "software",
+        "description": "Financial technology, payments, insurance, and security companies",
+        "source": "Finance software Search",
+        "filter": {
+          "region": "California",
+          "industryList": ["Financial Software"]
+        }
+      },
+      {
+        "name": "payments",
+        "description": "Financial technology, payments, insurance, and security companies",
+        "source": "Fintech & Financial Services Search",
+        "filter": {
+          "region": "California",
+          "industryList": ["Security", "Payments"]
+        }
+      },
+      {
+        "name": "insurance",
+        "description": "Financial technology, payments, insurance, and security companies",
+        "source": "Fintech & Financial Services Search",
+        "filter": {
+          "region": "California",
+          "industryList": ["Insurance", "InsurTech"]
+        }
+      },
+      {
+        "name": "biotech_pharma",
+        "description": "Biotechnology, digital health, genetics, and pharmaceutical companies",
+        "source": "Biotech & Pharmaceutical Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Biotechnology", "Genetics", "Pharmaceutical"]
+        }
+      },
+      {
+        "name": "digital_health",
+        "description": "Biotechnology, digital health, genetics, and pharmaceutical companies",
+        "source": "Digital Health Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Digital Health", "Pharmaceutical"]
+        }
+      },
+      {
+        "name": "health_wellness",
+        "description": "Beauty, fitness, personal health, and wellness companies",
+        "source": "Health & Wellness Search",
+        "filter": {
+          "country": "United States",
+          "region": "California",
+          "industryList": ["Beauty", "Fitness", "Personal Health", "Wellness"]
+        }
+      },
+      {
+        "name": "health tech",
+        "description": "health tech",
+        "source": "Health Tech Search",
+        "filter": {
+          "country": "United States",
+          "region": "California",
+          "industryList": ["Health Information Technology"]
+        }
+      },
+      {
+        "name": "healthcare",
+        "description": "Healthcare, health insurance, and medical companies",
+        "source": "Healthcare & Medical Search",
+        "filter": {
+          "country": "United States",
+          "region": "California",
+          "industryList": ["Health Care", "Health Insurance", "Healthcare", "Medical"]
+        }
+      },
+      {
+        "name": "ecommerce_retail",
+        "description": "E-commerce, retail, and retail technology companies",
+        "source": "E-commerce & Retail Search",
+        "filter": {
+          "country": "United States",
+          "region": "California",
+          "industryList": ["E-Commerce", "Retail", "Retail Technology"]
+        }
+      },
+      {
+        "name": "advertising_marketing",
+        "description": "Advertising, content marketing, and sales companies",
+        "source": "Advertising & Marketing Search",
+        "filter": {
+          "country": "United States",
+          "region": "California",
+          "industryList": ["Advertising", "Content Marketing", "Sales"]
+        }
+      },
+      {
+        "name": "content_media",
+        "description": "Content creation and media companies",
+        "source": "Content & Media Search",
+        "filter": {
+          "country": "United States",
+          "region": "California",
+          "industryList": ["Content"]
+        }
+      },
+      {
+        "name": "consumer_fashion",
+        "description": "Consumer products, fashion, and product research companies",
+        "source": "Consumer & Fashion Search",
+        "filter": {
+          "country": "United States",
+          "region": "California",
+          "industryList": ["Consumer", "Fashion", "Product research"]
+        }
+      },
+      {
+        "name": "industrial_manufacturing",
+        "description": "Industrial, manufacturing, and materials companies",
+        "source": "Industrial & Manufacturing Search",
+        "filter": {
+          "country": "United States",
+          "region": "California",
+          "industryList": ["Industrial", "Manufacturing", "Materials"]
+        }
+      },
+      {
+        "name": "robotics",
+        "description": "Robotics companies",
+        "source": "Robotics Search",
+        "filter": {
+          "country": "United States",
+          "region": "California",
+          "industryList": ["Robotics"]
+        }
+      },
+      {
+        "name": "gaming_ar_vr",
+        "description": "Video games, 3D technology, VR, and AR companies",
+        "source": "Gaming, AR & VR Search",
+        "filter": {
+          "country": "United States",
+          "region": "California",
+          "industryList": ["Video Games", "3D Technology", "VR", "AR"]
+        }
+      },
+      {
+        "name": "financial services",
+        "description": "Financial technology, payments, insurance, and security companies",
+        "source": "Fintech & Financial Services Search",
+        "filter": {
+          "region": "California",
+          "industryList": ["Financial Services"]
+        }
+      },
+      {
+        "name": "software",
+        "description": "Financial technology, payments, insurance, and security companies",
+        "source": "Software Search",
+        "filter": {
+          "region": "California",
+          "industryList": ["Software"]
+        }
+      },
+      {
+        "name": "information tech",
+        "description": "Financial technology, payments, insurance, and security companies",
+        "source": "Information Tech Search",
+        "filter": {
+          "region": "California",
+          "industryList": ["Information Technology"]
+        }
+      }
+    ]
+  }

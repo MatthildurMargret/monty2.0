@@ -1,0 +1,323 @@
+{
+    "search_filters": [
+      {
+        "name": "fintech",
+        "description": "Financial technology",
+        "source": "Fintech Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["FinTech"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "finance",
+        "description": "Financial services",
+        "source": "Financial Services Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Finance"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "financial software",
+        "description": "Financial software",
+        "source": "Financial Software Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Financial Software"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "payments",
+        "description": "Payments",
+        "source": "Payments Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Payments"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "insurance",
+        "description": "Insurance",
+        "source": "Insurance Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Insurance"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "financial services",
+        "description": "Financial services",
+        "source": "Financial Services Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Financial Services"],
+          "totalFunding": 5000000,
+          "founded": 2021
+        }
+      },
+      {
+        "name": "accounting",
+        "description": "Accounting",
+        "source": "Accounting Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Accounting"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "Banking",
+        "description": "Banking",
+        "source": "Banking Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Banking"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "Technology, Information and Internet",
+        "description": "Technology, Information and Internet",
+        "source": "Technology, Information and Internet Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Technology, Information and Internet"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "Asset Management",
+        "description": "Asset Management",
+        "source": "Asset Management Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Asset Management"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "blockchain",
+        "description": "Blockchain",
+        "source": "Blockchain Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Blockchain", "Cryptocurrency"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "lending",
+        "description": "Lending",
+        "source": "Lending Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Lending", "Credit", "Consumer Lending"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "mortgage",
+        "description": "Mortgage",
+        "source": "Mortgage Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Mortgage", "Commercial Lending"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "credit cards",
+        "description": "Credit Cards",
+        "source": "Credit Cards Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Credit Cards"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "wealth management",
+        "description": "Wealth Management",
+        "source": "Wealth Management Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Wealth Management", "Investment Management"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "trading",
+        "description": "Trading",
+        "source": "Trading Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Trading Platform", "Brokerage"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "venture capital",
+        "description": "Venture Capital",
+        "source": "Venture Capital Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Venture Capital", "Real Estate Investment"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "insurtech",
+        "description": "InsurTech",
+        "source": "InsurTech Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["InsurTech", "Insurance Brokers"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "life insurance",
+        "description": "Life Insurance",
+        "source": "Life Insurance Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Life Insurance", "Health Insurance"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "property insurance",
+        "description": "Property Insurance",
+        "source": "Property Insurance Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Property Insurance", "Auto Insurance", "Commercial Insurance"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "compliance",
+        "description": "Compliance",
+        "source": "Compliance Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Compliance", "Risk Management"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "tax",
+        "description": "Tax",
+        "source": "Tax Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Tax Preparation", "Tax Consulting"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "crowdfunding",
+        "description": "Crowdfunding",
+        "source": "Crowdfunding Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Crowdfunding"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "proptech",
+        "description": "PropTech",
+        "source": "PropTech Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["PropTech"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "personal finance",
+        "description": "Personal Finance",
+        "source": "Personal Finance Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Personal Finance"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "capital markets",
+        "description": "Capital Markets",
+        "source": "Capital Markets Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Capital Markets", "Investment Banking", "Financial Exchanges"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "mobile payments",
+        "description": "Mobile Payments",
+        "source": "Mobile Payments Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Mobile Payments"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "payroll",
+        "description": "Payroll",
+        "source": "Payroll Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Payroll", "Bookkeeping and Payroll"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      },
+      {
+        "name": "debtcollections",
+        "description": "Debt Collections",
+        "source": "Debt Collections Search",
+        "filter": {
+          "country": "United States",
+          "industryList": ["Debt Collections"],
+          "totalFunding": 5000000,
+          "founded": 2024
+        }
+      }
+    ]
+  }
