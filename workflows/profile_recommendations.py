@@ -313,8 +313,24 @@ def get_profile_recommendations(limit=3, search_filters=None):
     recommended_data = load_recommended_profiles()
     previously_recommended = set(recommended_data['profile_ids'])
     
-    new_profiles = [p for p in filtered if p.get('id') not in previously_recommended]
-    logger.info(f"After excluding {len(previously_recommended)} previously recommended, {len(new_profiles)} profiles remain")
+    # Verify profile IDs exist and log details
+    profiles_with_ids = [p for p in filtered if p.get('id')]
+    profiles_without_ids = [p for p in filtered if not p.get('id')]
+    
+    if profiles_without_ids:
+        logger.warning(f"{len(profiles_without_ids)} profiles missing 'id' field - will be excluded from recommendations")
+    
+    # Filter out previously recommended profiles
+    new_profiles = []
+    excluded_count = 0
+    for p in profiles_with_ids:
+        profile_id = p.get('id')
+        if profile_id not in previously_recommended:
+            new_profiles.append(p)
+        else:
+            excluded_count += 1
+    
+    logger.info(f"After excluding {len(previously_recommended)} previously recommended ({excluded_count} from current batch), {len(new_profiles)} new profiles remain")
     
     if not new_profiles:
         logger.warning("All filtered profiles have been previously recommended")
@@ -327,6 +343,19 @@ def get_profile_recommendations(limit=3, search_filters=None):
     # Step 6: Use AI to select the best N profiles
     selected_profiles = select_best_profiles_with_ai(top_candidates, target_count=limit)
     logger.info(f"AI selected {len(selected_profiles)} final profile recommendations")
+    
+    # Final verification: ensure all returned profiles are new (double-check)
+    final_profile_ids = [p.get('id') for p in selected_profiles if p.get('id')]
+    duplicate_check = [pid for pid in final_profile_ids if pid in previously_recommended]
+    
+    if duplicate_check:
+        logger.error(f"⚠️  WARNING: {len(duplicate_check)} selected profiles were previously recommended! IDs: {duplicate_check}")
+        # Filter out duplicates just to be safe
+        selected_profiles = [p for p in selected_profiles if p.get('id') not in previously_recommended]
+        logger.info(f"After removing duplicates, {len(selected_profiles)} new profiles remain")
+    
+    if selected_profiles:
+        logger.info(f"✅ Returning {len(selected_profiles)} NEW profiles (IDs: {[p.get('id') for p in selected_profiles if p.get('id')]})")
     
     return selected_profiles
 

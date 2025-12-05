@@ -15,6 +15,37 @@ from services.openai_api import web_search
 from datetime import datetime
 import re
 
+def normalize_company_name(company_name):
+    """
+    Normalize company name for comparison/deduplication purposes.
+    Removes whitespace, converts to lowercase, and removes common punctuation.
+    
+    Examples:
+    - "Cassidy Bio" -> "cassidybio"
+    - "CassidyBio" -> "cassidybio"
+    - "Cassidy-Bio" -> "cassidybio"
+    - "Cassidy.Bio" -> "cassidybio"
+    
+    Args:
+        company_name (str): Company name to normalize
+        
+    Returns:
+        str: Normalized company name for comparison
+    """
+    if not company_name or not isinstance(company_name, str):
+        return ""
+    
+    # Convert to lowercase
+    normalized = company_name.lower().strip()
+    
+    # Remove all whitespace
+    normalized = re.sub(r'\s+', '', normalized)
+    
+    # Remove common punctuation that might vary
+    normalized = re.sub(r'[.\-_]', '', normalized)
+    
+    return normalized
+
 def clean_company_name(company_name):
     """
     Clean company name by removing headlines, funding amounts, action verbs, and extra descriptions.
@@ -35,6 +66,8 @@ def clean_company_name(company_name):
     
     # Common action verbs/phrases that indicate headline text to remove
     action_verbs = [
+        r'\s+Pulls\s+',
+        r'\s+Receives\s+',
         r'\s+Bags\s+',
         r'\s+Grabs\s+',
         r'\s+Raises\s+',
@@ -821,7 +854,7 @@ def ddg_search(deal_dict):
 def find_link_if_missing(deal):
     """
     Search for a relevant announcement link if one is missing in the deal dictionary.
-    Uses Playwright to search DuckDuckGo and find the most relevant link.
+    Uses Parallel API search to find the most relevant link.
     
     Args:
         deal (dict): The deal dictionary
@@ -837,7 +870,7 @@ def find_link_if_missing(deal):
     # Extract key information for search and relevance checking
     company = deal["Company"].strip()
     # Clean company name before searching to improve link quality
-    company = clean_company_name(company)
+    company_clean = clean_company_name(company)
     
     # Get funding amount without $ and M/K
     amount = ""
@@ -855,173 +888,140 @@ def find_link_if_missing(deal):
         if isinstance(deal["Investors"], list):
             investors = deal["Investors"]
         else:
-            investors = [inv.strip() for inv in deal["Investors"].split(",")]
+            investors = [inv.strip() for inv in str(deal["Investors"]).split(",")]
     
     # Build search query with company name and funding keywords
     search_query = f"{company} startup funding {round_type}"
     if investors and len(investors) > 0:
         search_query += f" {investors[0]}"  # Add the first investor to the search
 
+    # Try Parallel API search first
     try:
-        link = serpapi_search(deal)
-        deal["Link"] = link
-        return deal
-
-    except Exception as e:
-        print(f"Error with serpapi_search: {e}")
-    
-    duckduckgo_url = f"https://duckduckgo.com/?q={search_query.replace(' ', '+')}"
-    
-    try:
-        from playwright.sync_api import sync_playwright
+        from services.parallel_client import Parallel
         
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=False)  
-            page = browser.new_page()
-            
-            # Navigate to DuckDuckGo
-            page.goto(duckduckgo_url)
-            
-            # Wait longer for search results to load
-            page.wait_for_load_state("networkidle")
-            page.wait_for_timeout(5000)  # Wait 5 seconds
-            
-            # Try different selectors to find search results
-            results = []
-            
-            # First try the standard selector
-            try:
-                if page.locator("article.nrn-react-div").count() > 0:
-                    result_elements = page.locator("article.nrn-react-div").all()
+        api_key = os.getenv("PARALLEL_API_KEY")
+        if not api_key:
+            print(f"⚠️  PARALLEL_API_KEY not found. Skipping link search for {company}")
+            deal["Link"] = f"https://www.google.com/search?q={search_query.replace(' ', '+')}"
+            return deal
+        
+        parallel_client = Parallel(api_key=api_key)
+        
+        # Build objective for Parallel API search
+        objective = f"Find the most relevant funding announcement article for {company}"
+        if amount:
+            objective += f" that raised ${amount}M"
+        if round_type:
+            objective += f" in a {round_type} round"
+        if investors and len(investors) > 0:
+            objective += f" with investors including {investors[0]}"
+        
+        # Use Parallel API search
+        search_results = parallel_client.beta.search(
+            mode="one-shot",
+            search_queries=[search_query],
+            max_results=10,
+            objective=objective,
+            max_chars_per_result=5000
+        )
+        
+        # Extract results from Parallel API response
+        results = []
+        if isinstance(search_results, dict) and "results" in search_results:
+            for result in search_results["results"]:
+                if isinstance(result, dict):
+                    # Extract link, title, and snippet from various possible formats
+                    link = result.get("url") or result.get("link") or result.get("href")
+                    title = result.get("title") or result.get("name") or result.get("headline", "")
                     
-                    for element in result_elements[:10]:
-                        title_el = element.locator("a[data-testid='result-title-a']").first
-                        snippet_el = element.locator("div[data-testid='result-snippet']").first
-                        
-                        if title_el:
-                            title = title_el.text_content()
-                            link = title_el.get_attribute("href")
-                            snippet = snippet_el.text_content() if snippet_el else ""
-                            results.append({
-                                "title": title,
-                                "link": link,
-                                "snippet": snippet
-                            })
-            except Exception as e:
-                pass
-            # If no results, try alternative selector
-            if not results:
-                try:
-                    # Try a more general selector for results
-                    result_links = page.locator("a[href^='https://']").all()
+                    # Parallel API provides excerpts array with content
+                    excerpts = result.get("excerpts", [])
+                    if excerpts and isinstance(excerpts, list):
+                        snippet = " ".join(str(ex) for ex in excerpts if ex)
+                    else:
+                        snippet = result.get("snippet") or result.get("description") or result.get("text") or result.get("summary") or ""
                     
-                    for link_el in result_links[:20]:  # Check more links
-                        href = link_el.get_attribute("href")
-                        # Skip DuckDuckGo internal links
-                        if "duckduckgo.com" in href:
-                            continue
-                        
-                        title = link_el.text_content() or "No title"
+                    if link:
                         results.append({
                             "title": title,
-                            "link": href,
-                            "snippet": ""
+                            "link": link,
+                            "snippet": snippet
                         })
-                except Exception as e:
-                    pass
+        
+        # Score and rank results
+        if results:
+            # Define relevant domains for funding news
+            relevant_domains = [
+                "techcrunch.com", "venturebeat.com", "businesswire.com", 
+                "prnewswire.com", "forbes.com", "wsj.com", "bloomberg.com", "reuters.com",
+                "fortune.com", "siliconangle.com", "fiercebiotech.com", "fiercehealthcare.com",
+                "mobihealthnews.com", "medcitynews.com", "pymnts.com", "finextra.com",
+                "finsmes.com", "vcnewsdaily.com", "eu-startups.com", "world-nuclear-news.org",
+                "techfundingnews.com", "fusionxinvest.com", "siliconcanals.com"
+            ]
             
-            # If still no results, try one more approach
-            if not results:
-                try:
-                    # Get all links on the page
-                    all_links = page.evaluate("""() => {
-                        const links = Array.from(document.querySelectorAll('a[href]'));
-                        return links.map(link => {
-                            return {
-                                href: link.href,
-                                text: link.textContent
-                            };
-                        }).filter(link => 
-                            link.href.startsWith('https://') && 
-                            !link.href.includes('duckduckgo.com')
-                        );
-                    }""")
-                                    
-                    for link_data in all_links[:20]:
-                        results.append({
-                            "title": link_data["text"] or "No title",
-                            "link": link_data["href"],
-                            "snippet": ""
-                        })
-                except Exception as e:
-                    pass
+            # Score each result based on relevance
+            scored_results = []
+            for result in results:
+                score = 0
+                title = result.get("title", "").lower()
+                snippet = result.get("snippet", "").lower()
+                content = title + " " + snippet
+                link = result.get("link", "").lower()
+                
+                # Check for company name (highest priority)
+                if company.lower() in content or company.lower() in link or company_clean.lower() in content:
+                    score += 10
+                
+                # Check for funding amount
+                if amount and amount in content:
+                    score += 5
+                
+                # Check for round type
+                if round_type and round_type in content:
+                    score += 3
+                
+                # Check for investors
+                for investor in investors:
+                    if investor.lower() in content:
+                        score += 2
+                        break
+                
+                # Check for funding keywords
+                funding_keywords = ["funding", "raises", "raised", "investment", "announces", "million", "round"]
+                for keyword in funding_keywords:
+                    if keyword in content:
+                        score += 1
+                
+                # Bonus for relevant domains
+                if any(domain in link for domain in relevant_domains):
+                    score += 5
+                
+                scored_results.append((score, result))
             
-            browser.close()
-                    
-            # If we have results, score and rank them
-            if results:
-                # Define relevant domains for funding news
-                relevant_domains = [
-                    "techcrunch.com", "venturebeat.com", "businesswire.com", 
-                    "prnewswire.com", "forbes.com", "wsj.com", "bloomberg.com", "reuters.com",
-                    "fortune.com", "siliconangle.com", "fiercebiotech.com", "fiercehealthcare.com",
-                    "mobihealthnews.com", "medcitynews.com", "pymnts.com", "finextra.com",
-                    "finsmes.com", "vcnewsdaily.com", "eu-startups.com", "world-nuclear-news.org",
-                    "techfundingnews.com", "fusionxinvest.com", "siliconcanals.com"
-                ]
-                
-                # Score each result based on relevance
-                scored_results = []
-                for result in results:
-                    score = 0
-                    title = result["title"].lower()
-                    snippet = result["snippet"].lower()
-                    content = title + " " + snippet
-                    link = result["link"].lower()
-                    
-                    # Check for company name (highest priority)
-                    if company.lower() in content or company.lower() in link:
-                        score += 10
-                    
-                    # Check for funding amount
-                    if amount and amount in content:
-                        score += 5
-                    
-                    # Check for round type
-                    if round_type and round_type in content:
-                        score += 3
-                    
-                    # Check for investors
-                    for investor in investors:
-                        if investor.lower() in content:
-                            score += 2
-                            break
-                    
-                    # Check for funding keywords
-                    funding_keywords = ["funding", "raises", "raised", "investment", "announces", "million", "round"]
-                    for keyword in funding_keywords:
-                        if keyword in content:
-                            score += 1
-                    
-                    # Bonus for relevant domains
-                    if any(domain in link for domain in relevant_domains):
-                        score += 5
-                    
-                    scored_results.append((score, result))
-                
-                # Sort by score (descending)
-                scored_results.sort(reverse=True, key=lambda x: x[0])
-                
-                # Choose the highest scoring result
-                if scored_results:
-                    best_result = scored_results[0][1]
-                    deal["Link"] = best_result["link"]
-                else:
-                    deal["Link"] = duckduckgo_url
+            # Sort by score (descending)
+            scored_results.sort(reverse=True, key=lambda x: x[0])
+            
+            # Choose the highest scoring result
+            if scored_results and scored_results[0][0] > 0:  # Only use if score > 0
+                best_result = scored_results[0][1]
+                deal["Link"] = best_result["link"]
+                print(f"Found links for deal: {company} Links: {len(results)} results")
+                print(f"Best link: {deal['Link']}")
             else:
+                print(f"Found links for deal: {company} Links: {len(results)} results (none scored high enough)")
+                print(f"Best link: None")
                 deal["Link"] = f"https://www.google.com/search?q={search_query.replace(' ', '+')}"
-    
+        else:
+            print(f"Found links for deal: {company} Links: []")
+            print(f"Best link: None")
+            deal["Link"] = f"https://www.google.com/search?q={search_query.replace(' ', '+')}"
+            
+    except ImportError:
+        print(f"⚠️  parallel_client not available. Skipping link search for {company}")
+        deal["Link"] = f"https://www.google.com/search?q={search_query.replace(' ', '+')}"
     except Exception as e:
+        print(f"Error with Parallel API search for {company}: {e}")
         deal["Link"] = f"https://www.google.com/search?q={search_query.replace(' ', '+')}"
     
     return deal

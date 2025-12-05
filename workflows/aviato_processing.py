@@ -1691,7 +1691,12 @@ def find_founder(company_id):
         except (ValueError, requests.exceptions.JSONDecodeError) as e:
             logger.error("Find founder JSON decode error for %s: %s | Snippet: %s", company_id, e, response.text[:200])
             return None
+    elif response.status_code == 404:
+        # 404 is expected when a company doesn't have founder data available
+        logger.debug("No founder data available for company %s (404)", company_id)
+        return None
     else:
+        # Log other status codes (500, 401, 403, etc.) as errors since they indicate actual problems
         logger.error("Find founder error: %s | %s", response.status_code, response.text[:200])
         return None
 

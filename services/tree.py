@@ -14,6 +14,76 @@ def get_tree_path():
     """Get the correct path to taste_tree.json relative to the project root."""
     return os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "taste_tree.json")
 
+
+def load_taste_tree_from_supabase():
+    """Load the latest version of taste_tree from Supabase.
+    
+    Returns:
+        dict: The taste tree data (same structure as JSON file)
+    
+    Raises:
+        ImportError: If supabase package is not installed
+        ValueError: If required environment variables are not set or no data found
+    """
+    try:
+        from supabase import create_client, Client
+    except ImportError:
+        raise ImportError(
+            "supabase package is required. Install with: pip install supabase"
+        )
+    
+    supabase_url = os.getenv("SUPABASE_URL")
+    supabase_key = os.getenv("SUPABASE_KEY")
+    
+    if not supabase_url:
+        raise ValueError("SUPABASE_URL must be set in your .env file")
+    if not supabase_key:
+        raise ValueError("SUPABASE_KEY must be set in your .env file")
+    
+    supabase = create_client(supabase_url, supabase_key)
+    
+    # Get the latest version of the tree
+    response = supabase.table("taste_tree")\
+        .select("data")\
+        .order("created_at", desc=True)\
+        .limit(1)\
+        .execute()
+    
+    if not response.data:
+        raise ValueError("No taste_tree data found in Supabase")
+    
+    return response.data[0]['data']
+
+
+def load_taste_tree(use_supabase=None):
+    """Load taste tree from either Supabase or JSON file.
+    
+    Args:
+        use_supabase: If True, load from Supabase. If False, load from JSON.
+                     If None, check TREE_SOURCE env var or default to JSON.
+    
+    Returns:
+        dict: The taste tree data
+    """
+    # Check environment variable or parameter
+    if use_supabase is None:
+        tree_source = os.getenv("TREE_SOURCE", "json").lower()
+        use_supabase = (tree_source == "supabase")
+    
+    if use_supabase:
+        try:
+            return load_taste_tree_from_supabase()
+        except Exception as e:
+            print(f"⚠️  Error loading from Supabase: {e}")
+            print("   Falling back to JSON file...")
+            # Fall back to JSON if Supabase fails
+            with open(get_tree_path(), 'r') as f:
+                return json.load(f)
+    else:
+        with open(get_tree_path(), 'r') as f:
+            return json.load(f)
+
+
 # Configuration flag to enable/disable tree writes (disabled for Railway deployment)
 ENABLE_TREE_WRITES = True
 
@@ -1298,8 +1368,17 @@ def get_all_nodes():
     for title in sorted(titles):
         print(title)
 
-def get_nodes_and_names():
-    import json
+def get_nodes_and_names(use_supabase=None):
+    """Get mapping of user names to their assigned category paths.
+    
+    Args:
+        use_supabase: If True, load from Supabase. If False, load from JSON.
+                     If None, check TREE_SOURCE env var or default to JSON.
+    
+    Returns:
+        dict: Mapping of user names to lists of category paths, e.g.:
+              {"Todd": ["AI > Healthcare > Diagnostics", ...], ...}
+    """
     from collections import defaultdict
 
     def traverse_and_collect(node, path, lead_to_nodes):
@@ -1319,9 +1398,8 @@ def get_nodes_and_names():
             if 'children' in content and content['children']:
                 traverse_and_collect(content['children'], new_path, lead_to_nodes)
 
-    # Load JSON file
-    with open(get_tree_path(), 'r') as f:
-        tree_data = json.load(f)
+    # Load tree data (from Supabase or JSON)
+    tree_data = load_taste_tree(use_supabase=use_supabase)
 
     # Dictionary to hold the mapping
     lead_to_nodes = defaultdict(list)

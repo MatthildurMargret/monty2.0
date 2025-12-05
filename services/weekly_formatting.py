@@ -139,10 +139,59 @@ def generate_html(preseed_df, tracking_df, recs, pipeline_dict,
             return ""
 
         def format_company_tags(companies):
-            if isinstance(companies, str) and companies.strip():
-                companies = companies.rstrip('.')
-                company_list = companies.split(', ')
-                return ' '.join(f"<span class='tag tag-company'>{c}</span>" for c in company_list)
+            """Format company tags, filtering out empty, None, or 'None' values."""
+            # Return empty if None, NaN, or empty string
+            if not companies or pd.isna(companies):
+                return ""
+            
+            # Convert to string and check for "None" as a string
+            companies_str = str(companies).strip()
+            if not companies_str or companies_str.lower() in ["none", "nan", ""]:
+                return ""
+            
+            # Clean and split (handle both ", " and "," separators)
+            companies_str = companies_str.rstrip('.')
+            # Split by comma, then strip each item
+            company_list = [item.strip() for item in companies_str.split(',') if item.strip()]
+            
+            # Filter out empty strings, "None", "nan", etc.
+            cleaned_list = []
+            for c in company_list:
+                c_cleaned = c.strip()
+                if c_cleaned and c_cleaned.lower() not in ["none", "nan", ""]:
+                    cleaned_list.append(c_cleaned)
+            
+            # Return formatted tags only if we have valid entries
+            if cleaned_list:
+                return ' '.join(f"<span class='tag tag-company'>{c}</span>" for c in cleaned_list)
+            return ""
+        
+        def format_school_tags(schools):
+            """Format school tags, filtering out empty, None, or 'None' values."""
+            # Return empty if None, NaN, or empty string
+            if not schools or pd.isna(schools):
+                return ""
+            
+            # Convert to string and check for "None" as a string
+            schools_str = str(schools).strip()
+            if not schools_str or schools_str.lower() in ["none", "nan", ""]:
+                return ""
+            
+            # Clean and split (handle both ", " and "," separators)
+            schools_str = schools_str.rstrip('.')
+            # Split by comma, then strip each item
+            school_list = [item.strip() for item in schools_str.split(',') if item.strip()]
+            
+            # Filter out empty strings, "None", "nan", etc.
+            cleaned_list = []
+            for s in school_list:
+                s_cleaned = s.strip()
+                if s_cleaned and s_cleaned.lower() not in ["none", "nan", ""]:
+                    cleaned_list.append(s_cleaned)
+            
+            # Return formatted tags only if we have valid entries
+            if cleaned_list:
+                return ' '.join(f"<span class='tag tag-company'>{s}</span>" for s in cleaned_list)
             return ""
 
         def format_thesis_tags(thesis):
