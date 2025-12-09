@@ -17,3 +17,9 @@ schedule>=1.2.0
 openai-agents
 flask>=2.0.0
 playwright>=1.40.0
+anytree>=2.9.0
+google-search-results>=2.4.2
+pyarrow>=10.0.0
+xgboost>=2.0.0
+joblib>=1.0.0
+supabase>=2.0.0

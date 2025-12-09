@@ -707,15 +707,15 @@ def main():
     print(f"📄 Saved to: {output_path}")
 
     # Send email
-    #send_email(html_output)
+    send_email(html_output)
 
     # Mark recommended founders/companies to avoid repeats
-    #mark_as_recommended(recs)
+    mark_as_recommended(recs)
     
     # Mark recommended profiles to avoid repeats
-    #if profile_ids:
-    #    mark_profiles_as_recommended(profile_ids)
-    #    print(f"Marked {len(profile_ids)} profiles as recommended")
+    if profile_ids:
+        mark_profiles_as_recommended(profile_ids)
+        print(f"Marked {len(profile_ids)} profiles as recommended")
     
     return html_output
 

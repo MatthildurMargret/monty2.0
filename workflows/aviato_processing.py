@@ -1402,10 +1402,6 @@ def search_aviato_companies(search_filters):
 
     payload = {"dsl": dsl}
 
-    # Debug logging
-    logger.info("Company search payload: %s", payload)
-    print(json.dumps(payload, indent=2))  # for manual inspection
-
     url = "https://data.api.aviato.co/company/search"
 
     headers = {
@@ -1419,8 +1415,6 @@ def search_aviato_companies(search_filters):
     if response is None:
         logger.error("Company search failed: No response after retries")
         return None
-
-    logger.info("Company search response status: %s", response.status_code)
     if response.status_code == 200:
         return response.json()
     else:
@@ -1665,39 +1659,68 @@ def filter_relevant(companies):
     return relevant
 
 def find_founder(company_id):
+    """
+    Find founders for a company by ID.
+    
+    Returns:
+        dict with 'founders' key containing list of founder objects, or None if not found/error
+    """
     # Respect dedicated RPM for founders endpoint
     _wait_for_founder_rate_limit()
 
-    url = "https://data.api.aviato.co/company/" + company_id + "/founders?perPage=1&page=1"
+    # Correct endpoint format: /company/founders with id as query parameter
+    url = "https://data.api.aviato.co/company/founders"
+    params = {
+        "id": company_id,
+        "perPage": 100,
+        "page": 1
+    }
 
     headers = {
         "Authorization": f"Bearer {aviato_api}"
     }
+    
+    if not aviato_api:
+        logger.error("AVIATO_KEY is not set! Cannot make API request for company %s", company_id)
+        return None
 
     response = request_with_backoff(
         "GET",
         url,
         headers=headers,
+        params=params,
     )
 
     if response is None:
-        logger.error("Find founder error: No response for company %s", company_id)
+        logger.error("Find founder error: No response after retries for company %s", company_id)
         return None
 
     if response.status_code == 200:
         try:
             data = response.json()
+            # Check if we need to fetch more pages
+            total_pages = data.get("pages", 1)
+            if total_pages > 1:
+                logger.warning("Company %s has %d pages of founders, but only fetching page 1", 
+                             company_id, total_pages)
             return data
         except (ValueError, requests.exceptions.JSONDecodeError) as e:
-            logger.error("Find founder JSON decode error for %s: %s | Snippet: %s", company_id, e, response.text[:200])
+            logger.error("Find founder JSON decode error for %s: %s", company_id, e)
             return None
     elif response.status_code == 404:
         # 404 is expected when a company doesn't have founder data available
-        logger.debug("No founder data available for company %s (404)", company_id)
+        return None
+    elif response.status_code == 401:
+        logger.error("Find founder AUTHENTICATION ERROR (401) for company %s. Check AVIATO_KEY!", company_id)
+        return None
+    elif response.status_code == 403:
+        logger.error("Find founder FORBIDDEN (403) for company %s. API key may not have permission.", company_id)
+        return None
+    elif response.status_code == 429:
+        logger.warning("Find founder RATE LIMITED (429) for company %s", company_id)
         return None
     else:
-        # Log other status codes (500, 401, 403, etc.) as errors since they indicate actual problems
-        logger.error("Find founder error: %s | %s", response.status_code, response.text[:200])
+        logger.error("Find founder error: status=%d for company %s", response.status_code, company_id)
         return None
 
 def aviato_search_collect(search_filters, source="aviato_search"):
@@ -1712,21 +1735,46 @@ def aviato_search_collect(search_filters, source="aviato_search"):
         
     ids = [item["id"] for item in data["items"]]
     logger.info("Found %d companies", len(ids))
+    
     companies = enrich_companies(ids)
     relevant = filter_relevant(companies)
     logger.info("Found %d relevant companies", len(relevant))
-    founder_data = []
     
-    for co in relevant:
+    if len(relevant) == 0:
+        logger.warning("No relevant companies to process for founders")
+        return []
+    
+    # Calculate estimated time and warn if it exceeds discovery limit
+    estimated_seconds = len(relevant) * (60.0 / max(AVIATO_FOUNDER_RPM, 1))
+    estimated_hours = estimated_seconds / 3600.0
+    if estimated_hours > 6:
+        logger.warning("Estimated time (%.1f hours) exceeds 6-hour discovery limit for %d companies", 
+                     estimated_hours, len(relevant))
+    
+    founder_data = []
+    companies_with_founders = 0
+    
+    for idx, co in enumerate(relevant):
         company_id = co["id"]
         company_name = co["name"]
         company_url = co.get("website", "")
+        
+        # Log progress every 100 companies or every 10% of companies
+        if (idx + 1) % max(100, len(relevant) // 10) == 0 or (idx + 1) == len(relevant):
+            logger.info("Founder lookup progress: %d/%d companies (%.1f%%) | Founders collected: %d", 
+                       idx + 1, len(relevant), 100.0 * (idx + 1) / len(relevant), len(founder_data))
 
         founder = find_founder(company_id)
         if not founder or "founders" not in founder:
             continue
+        
+        founders_list = founder.get("founders", [])
+        if len(founders_list) == 0:
+            continue
+        
+        companies_with_founders += 1
             
-        for f in founder.get("founders", []):
+        for f in founders_list:
             # Skip if no fullName
             if not f.get('fullName'):
                 continue
@@ -1738,7 +1786,7 @@ def aviato_search_collect(search_filters, source="aviato_search"):
             # Skip if no LinkedIn URL
             if not linkedin_url:
                 continue
-                
+            
             founder_data.append({
                 'name': f['fullName'],
                 'profile_url': linkedin_url,
@@ -1748,7 +1796,7 @@ def aviato_search_collect(search_filters, source="aviato_search"):
                 'company_url': company_url
             })
     
-    logger.info("Collected %d founders from %s", len(founder_data), source)
+    logger.info("Collected %d founders from %d companies (%s)", len(founder_data), companies_with_founders, source)
     return founder_data
 
 def aviato_search(search_filters, source="aviato_search"):
