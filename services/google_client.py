@@ -39,24 +39,70 @@ def authenticate_gmail():
     google_creds_json = base64.b64decode(google_creds_b64).decode('utf-8')
     google_creds = json.loads(google_creds_json)
 
-    # Load and decode GOOGLE_TOKENS_BASE64 if present
-    google_tokens_b64 = os.getenv('GOOGLE_TOKENS_BASE64')
-    if google_tokens_b64:
-        google_tokens_json = base64.b64decode(google_tokens_b64).decode('utf-8')
-        creds = Credentials.from_authorized_user_info(json.loads(google_tokens_json), SCOPES)
+    # Try to load tokens from local file first (more reliable)
+    if os.path.exists(TOKEN_PATH):
+        try:
+            with open(TOKEN_PATH, 'r') as token_file:
+                token_data = json.load(token_file)
+                creds = Credentials.from_authorized_user_info(token_data, SCOPES)
+                print("✅ Loaded credentials from local token file")
+        except Exception as e:
+            print(f"Warning: Could not load token file: {e}")
+
+    # If no local token, try loading from environment variable
+    if not creds:
+        google_tokens_b64 = os.getenv('GOOGLE_TOKENS_BASE64')
+        if google_tokens_b64:
+            try:
+                google_tokens_json = base64.b64decode(google_tokens_b64).decode('utf-8')
+                creds = Credentials.from_authorized_user_info(json.loads(google_tokens_json), SCOPES)
+                print("✅ Loaded credentials from environment variable")
+            except Exception as e:
+                print(f"Warning: Could not load saved credentials from env: {e}")
+                creds = None
+
+    # If we have credentials, check if they're valid or can be refreshed
+    if creds:
+        if creds.expired and creds.refresh_token:
+            try:
+                creds.refresh(Request())
+                # Save the refreshed token to local file
+                token_data = json.loads(creds.to_json())
+                os.makedirs(os.path.dirname(TOKEN_PATH), exist_ok=True)
+                with open(TOKEN_PATH, 'w') as token_file:
+                    json.dump(token_data, token_file)
+                print("✅ Credentials refreshed and saved to local file")
+                
+                # Also print the base64 version for env var update
+                new_token_b64 = base64.b64encode(creds.to_json().encode('utf-8')).decode('utf-8')
+                print("⚠️  Update your GOOGLE_TOKENS_BASE64 with this new value (optional, local file is used):")
+                print(new_token_b64)
+            except Exception as e:
+                print(f"Warning: Could not refresh credentials: {e}")
+                creds = None
+        elif not creds.valid:
+            print("Warning: Credentials are invalid and cannot be refreshed")
+            creds = None
 
     # If no valid creds, do OAuth flow
     if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
-            flow = InstalledAppFlow.from_client_config(google_creds, SCOPES)
-            creds = flow.run_local_server(port=8080, access_type='offline', prompt='consent')
-            # Print new token to rebase64 and set in env
-            new_token_json = creds.to_json()
-            new_token_b64 = base64.b64encode(new_token_json.encode('utf-8')).decode('utf-8')
-            print("New GOOGLE_TOKENS_BASE64 value:\n")
-            print(new_token_b64)
+        print("Starting OAuth flow...")
+        flow = InstalledAppFlow.from_client_config(google_creds, SCOPES)
+        creds = flow.run_local_server(port=8080, access_type='offline', prompt='consent')
+        
+        # Save token to local file
+        token_data = json.loads(creds.to_json())
+        os.makedirs(os.path.dirname(TOKEN_PATH), exist_ok=True)
+        with open(TOKEN_PATH, 'w') as token_file:
+            json.dump(token_data, token_file)
+        print("✅ Credentials saved to local token file")
+        
+        # Print new token to rebase64 and set in env (optional)
+        new_token_json = creds.to_json()
+        new_token_b64 = base64.b64encode(new_token_json.encode('utf-8')).decode('utf-8')
+        print("\n✅ New GOOGLE_TOKENS_BASE64 value (optional, local file is used):\n")
+        print(new_token_b64)
+        print("\n")
 
     return creds
 

@@ -23,11 +23,241 @@ id = "912974853b494f98a5652fcbff3ad795"
 # Get workspace root directory (parent of workflows directory)
 WORKSPACE_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# Path to store processed alerts (workspace-relative)
+# Path to store processed alerts (workspace-relative) - kept for backward compatibility
 PROCESSED_ALERTS_FILE = os.path.join(WORKSPACE_ROOT, 'data', 'tracking', 'processed_alerts.json')
 
+# Try to import supabase client
+try:
+    from supabase import create_client
+    SUPABASE_AVAILABLE = True
+except ImportError:
+    SUPABASE_AVAILABLE = False
+    print("⚠️  supabase package not installed. Tracking will fall back to CSV/JSON. Install with: pip install supabase")
+
+
+def get_supabase_client():
+    """Create and return a Supabase client."""
+    if not SUPABASE_AVAILABLE:
+        return None
+    
+    supabase_url = os.getenv("SUPABASE_URL")
+    supabase_key = os.getenv("SUPABASE_KEY")
+    
+    if not supabase_url or not supabase_key:
+        return None
+    
+    try:
+        return create_client(supabase_url, supabase_key)
+    except Exception as e:
+        print(f"⚠️  Error creating Supabase client: {e}")
+        return None
+
+
+def load_tracking_from_supabase():
+    """Load tracking database from Supabase.
+    
+    Returns:
+        pandas.DataFrame: DataFrame with tracking data, or empty DataFrame if error
+    """
+    supabase = get_supabase_client()
+    if not supabase:
+        return pd.DataFrame()
+    
+    try:
+        response = supabase.table('tracking_db').select('*').execute()
+        if response.data:
+            df = pd.DataFrame(response.data)
+            # Rename co_founder to co-founder for compatibility
+            if 'co_founder' in df.columns:
+                df = df.rename(columns={'co_founder': 'co-founder'})
+            return df
+        else:
+            return pd.DataFrame()
+    except Exception as e:
+        print(f"⚠️  Error loading tracking from Supabase: {e}")
+        return pd.DataFrame()
+
+
+def save_tracking_to_supabase(tracking_df):
+    """Save tracking DataFrame to Supabase using upsert on page_id.
+    
+    Args:
+        tracking_df: pandas DataFrame with tracking data
+    
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    if tracking_df is None or tracking_df.empty:
+        return False
+    
+    supabase = get_supabase_client()
+    if not supabase:
+        print("⚠️  Supabase client not available. Cannot save tracking data.")
+        return False
+    
+    try:
+        # Create a copy to avoid modifying the original
+        df_copy = tracking_df.copy()
+        
+        # Rename co-founder to co_founder for database
+        if 'co-founder' in df_copy.columns:
+            df_copy = df_copy.rename(columns={'co-founder': 'co_founder'})
+        
+        # Handle page_links - convert string representation to JSON if needed
+        if 'page_links' in df_copy.columns:
+            def parse_page_links(val):
+                if pd.isna(val) or val == '' or val == 'None':
+                    return None
+                if isinstance(val, str):
+                    try:
+                        # Try to parse as JSON string
+                        return json.loads(val)
+                    except:
+                        # Try eval for Python dict strings
+                        try:
+                            return eval(val) if val else None
+                        except:
+                            return None
+                return val
+            
+            df_copy['page_links'] = df_copy['page_links'].apply(parse_page_links)
+        
+        # Convert DataFrame to list of dictionaries
+        # Replace NaN values with None for JSON serialization
+        records = df_copy.where(pd.notna(df_copy), None).to_dict('records')
+        
+        # Ensure all required columns exist and handle None values
+        for record in records:
+            # Convert date strings to proper format
+            if 'update_date' in record and record['update_date']:
+                try:
+                    if isinstance(record['update_date'], str):
+                        # Try to parse and format as YYYY-MM-DD
+                        record['update_date'] = pd.to_datetime(record['update_date']).strftime('%Y-%m-%d')
+                except:
+                    record['update_date'] = None
+            
+            # Convert timestamp strings
+            if 'last_checked' in record and record['last_checked']:
+                try:
+                    if isinstance(record['last_checked'], str):
+                        # Keep as is if it's already a timestamp string
+                        pass
+                except:
+                    record['last_checked'] = None
+            
+            # Convert empty strings to None for optional fields
+            for key in ['priority', 'founder', 'website', 'co_founder', 'personal_linkedin', 
+                       'most_recent_update', 'most_recent_update_link']:
+                if key in record and record[key] == '':
+                    record[key] = None
+        
+        # Upsert in batches (Supabase has limits on batch size)
+        batch_size = 100
+        total_upserted = 0
+        
+        for i in range(0, len(records), batch_size):
+            batch = records[i:i + batch_size]
+            try:
+                # Upsert on page_id (unique constraint)
+                response = supabase.table('tracking_db').upsert(
+                    batch, 
+                    on_conflict='page_id'
+                ).execute()
+                total_upserted += len(batch)
+                print(f"   ✅ Upserted batch {i//batch_size + 1} ({len(batch)} records)")
+            except Exception as e:
+                print(f"   ❌ Error upserting batch {i//batch_size + 1}: {e}")
+        
+        print(f"✅ Successfully upserted {total_upserted} records to tracking_db table")
+        return True
+        
+    except Exception as e:
+        print(f"❌ Error saving tracking to Supabase: {e}")
+        return False
+
+
+def load_processed_alerts_from_supabase():
+    """Load processed alert IDs from Supabase.
+    
+    Returns:
+        dict: Dictionary with 'processed_ids' list, or empty list if error
+    """
+    supabase = get_supabase_client()
+    if not supabase:
+        return {'processed_ids': []}
+    
+    try:
+        response = supabase.table('processed_alerts').select('alert_id').execute()
+        if response.data:
+            processed_ids = [item['alert_id'] for item in response.data]
+            return {'processed_ids': processed_ids}
+        else:
+            return {'processed_ids': []}
+    except Exception as e:
+        print(f"⚠️  Error loading processed alerts from Supabase: {e}")
+        return {'processed_ids': []}
+
+
+def save_processed_alert_to_supabase(alert_id):
+    """Save a processed alert ID to Supabase.
+    
+    Args:
+        alert_id: MD5 hash string of the alert
+    
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    if not alert_id:
+        return False
+    
+    supabase = get_supabase_client()
+    if not supabase:
+        return False
+    
+    try:
+        # Upsert the alert_id (will insert if new, do nothing if exists)
+        response = supabase.table('processed_alerts').upsert(
+            {'alert_id': alert_id},
+            on_conflict='alert_id'
+        ).execute()
+        return True
+    except Exception as e:
+        print(f"⚠️  Error saving processed alert to Supabase: {e}")
+        return False
+
+
+def check_processed_alert_in_supabase(alert_id):
+    """Check if an alert ID has been processed.
+    
+    Args:
+        alert_id: MD5 hash string of the alert
+    
+    Returns:
+        bool: True if alert exists, False otherwise
+    """
+    if not alert_id:
+        return False
+    
+    supabase = get_supabase_client()
+    if not supabase:
+        return False
+    
+    try:
+        response = supabase.table('processed_alerts').select('alert_id').eq('alert_id', alert_id).execute()
+        return len(response.data) > 0
+    except Exception as e:
+        print(f"⚠️  Error checking processed alert in Supabase: {e}")
+        return False
+
 def load_processed_alerts():
-    """Load the list of already processed alert IDs from file."""
+    """Load the list of already processed alert IDs from Supabase (with fallback to file)."""
+    # Try Supabase first
+    result = load_processed_alerts_from_supabase()
+    if result and result.get('processed_ids'):
+        return result
+    
+    # Fallback to file
     try:
         if os.path.exists(PROCESSED_ALERTS_FILE):
             with open(PROCESSED_ALERTS_FILE, 'r') as f:
@@ -35,17 +265,23 @@ def load_processed_alerts():
         else:
             return {'processed_ids': []}
     except Exception as e:
-        print(f"Error loading processed alerts: {e}")
+        print(f"Error loading processed alerts from file: {e}")
         return {'processed_ids': []}
 
 def save_processed_alerts(processed_alerts):
-    """Save the list of processed alert IDs to file."""
+    """Save the list of processed alert IDs to Supabase (with fallback to file)."""
+    # Try to save to Supabase first
+    if processed_alerts and 'processed_ids' in processed_alerts:
+        for alert_id in processed_alerts['processed_ids']:
+            save_processed_alert_to_supabase(alert_id)
+    
+    # Also save to file as backup
     try:
         os.makedirs(os.path.dirname(PROCESSED_ALERTS_FILE), exist_ok=True)
         with open(PROCESSED_ALERTS_FILE, 'w') as f:
             json.dump(processed_alerts, f, indent=2)
     except Exception as e:
-        print(f"Error saving processed alerts: {e}")
+        print(f"Error saving processed alerts to file: {e}")
 
 def generate_alert_id(alert):
     """Generate a unique ID for an alert based on its content."""
@@ -202,8 +438,8 @@ def process_tracking_list(tracking):
 
 def initialize_tracking_csv():
     """
-    Initialize the tracking CSV file from Notion.
-    This function should only be called once when the file doesn't exist.
+    Initialize the tracking database from Notion and save to Supabase (with CSV fallback).
+    This function loads from Notion, processes the data, and saves to Supabase.
     
     Returns:
         pandas.DataFrame: DataFrame with all tracking data initialized
@@ -226,11 +462,19 @@ def initialize_tracking_csv():
     if 'last_checked' not in tracking_df.columns:
         tracking_df['last_checked'] = ''
     
-    # Save to CSV
+    # Save to Supabase (with CSV fallback)
+    print("Saving to Supabase...")
+    supabase_success = save_tracking_to_supabase(tracking_df)
+    
+    # Also save to CSV as backup
     tracking_db_path = os.path.join(WORKSPACE_ROOT, 'data', 'tracking', 'tracking_db.csv')
     os.makedirs(os.path.dirname(tracking_db_path), exist_ok=True)
     tracking_df.to_csv(tracking_db_path, index=False)
-    print(f"✅ Initialized tracking database with {len(tracking_df)} companies")
+    
+    if supabase_success:
+        print(f"✅ Initialized tracking database with {len(tracking_df)} companies (saved to Supabase and CSV)")
+    else:
+        print(f"✅ Initialized tracking database with {len(tracking_df)} companies (saved to CSV, Supabase unavailable)")
     
     return tracking_df
 
@@ -256,24 +500,33 @@ def look_for_updates(profile_dict, company_info):
 
 def parse_list_for_updates():
     """
-    Process LinkedIn profiles from the tracking list CSV file in a safe way that avoids timeouts.
+    Process LinkedIn profiles from the tracking list (Supabase or CSV) in a safe way that avoids timeouts.
     Uses fresh browser instances for each profile, proper error handling, and delays between requests.
     """
-    # Use workspace-relative path or fallback to tracking_db if available
-    notion_export_path = os.path.join(WORKSPACE_ROOT, 'data', 'tracking', 'tracking_db.csv')
+    # Try loading from Supabase first
+    tracking = load_tracking_from_supabase()
     
-    # Fallback to old path if tracking_db doesn't exist (for backward compatibility)
-    if not os.path.exists(notion_export_path):
-        old_path = os.path.join(workspace_root, 'data', 'tracking_names', 'notion_export_processed.csv')
-        if os.path.exists(old_path):
-            notion_export_path = old_path
-        else:
-            # Try loading from Notion if no file exists
-            tracking = import_tracked(id, page_text=True)
-            tracking = process_tracking_list(tracking)
-            return tracking
+    # Fallback to CSV if Supabase is empty or unavailable
+    if tracking.empty:
+        notion_export_path = os.path.join(WORKSPACE_ROOT, 'data', 'tracking', 'tracking_db.csv')
+        
+        # Fallback to old path if tracking_db doesn't exist (for backward compatibility)
+        if not os.path.exists(notion_export_path):
+            old_path = os.path.join(WORKSPACE_ROOT, 'data', 'tracking_names', 'notion_export_processed.csv')
+            if os.path.exists(old_path):
+                notion_export_path = old_path
+            else:
+                # Try loading from Notion if no file exists
+                tracking = import_tracked(id, page_text=True)
+                tracking = process_tracking_list(tracking)
+                return tracking
+        
+        if os.path.exists(notion_export_path):
+            tracking = pd.read_csv(notion_export_path)
     
-    tracking = pd.read_csv(notion_export_path)
+    if tracking.empty:
+        print("⚠️  No tracking data available from Supabase or CSV")
+        return tracking
     
     processed_count = 0
     max_profiles = 10  # Limit to 10 profiles per run to avoid overloading
@@ -314,11 +567,12 @@ def parse_list_for_updates():
                     look_for_updates(profile_dict, row)
                     processed_count += 1
                     
-                    # Update the tracking CSV with the last checked date
-                    tracking.at[index, 'last_checked'] = datetime.now().strftime('%Y-%m-%d')
+                    # Update the tracking with the last checked date
+                    tracking.at[index, 'last_checked'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                     
                     # Save progress after each successful profile to avoid losing data
                     if processed_count % 2 == 0:  # Save every 2 profiles
+                        save_tracking_to_supabase(tracking)
                         tracking_db_path = os.path.join(WORKSPACE_ROOT, 'data', 'tracking', 'tracking_db.csv')
                         os.makedirs(os.path.dirname(tracking_db_path), exist_ok=True)
                         tracking.to_csv(tracking_db_path, index=False)
@@ -335,7 +589,8 @@ def parse_list_for_updates():
             # Add a delay between requests to avoid rate limiting
             time.sleep(delay_seconds)
         
-        # Save the updated tracking CSV with last checked dates
+        # Save the updated tracking to Supabase and CSV
+        save_tracking_to_supabase(tracking)
         tracking_db_path = os.path.join(WORKSPACE_ROOT, 'data', 'tracking', 'tracking_db.csv')
         os.makedirs(os.path.dirname(tracking_db_path), exist_ok=True)
         tracking.to_csv(tracking_db_path, index=False)
@@ -344,6 +599,7 @@ def parse_list_for_updates():
     except Exception as e:
         print(f"Unexpected error in profile processing batch: {str(e)}")
         # Save progress in case of unexpected errors
+        save_tracking_to_supabase(tracking)
         tracking_db_path = os.path.join(WORKSPACE_ROOT, 'data', 'tracking', 'tracking_db.csv')
         os.makedirs(os.path.dirname(tracking_db_path), exist_ok=True)
         tracking.to_csv(tracking_db_path, index=False)
@@ -467,21 +723,48 @@ def check_google_alerts(days=4):
     start_date = (datetime.today() - timedelta(days=days)).strftime('%Y/%m/%d')
     latest_alerts = get_emails_with_label(start_date=start_date, label_name="google alerts")
     
-    # Load the list of already processed alerts
+    # Load the list of already processed alerts from Supabase (with fallback)
     processed_alerts = load_processed_alerts()
-    processed_ids = set(processed_alerts['processed_ids'])
+    processed_ids = set(processed_alerts.get('processed_ids', []))
+    
+    print(f"📊 Loaded {len(processed_ids)} processed alert IDs from Supabase/JSON")
+    if len(processed_ids) > 0 and len(processed_ids) <= 5:
+        print(f"   Sample IDs: {list(processed_ids)[:3]}")
     
     relevant_alerts = []
     irrelevant_count = 0
     already_processed_count = 0
+    new_alerts_saved = 0
     
     print(f"Processing {len(latest_alerts)} alerts from the last {days} days...")
     
-    for alert in latest_alerts:
+    for i, alert in enumerate(latest_alerts):
+        # Use Gmail's message ID directly (unique identifier for each email)
+        alert_id = alert.get('id')
         
+        if not alert_id:
+            print(f"  ⚠️  Alert {i+1} has no ID, skipping...")
+            continue
+        
+        # Debug: print first 3 alerts
+        if i < 3:
+            print(f"  Alert {i+1}: Gmail ID={alert_id}, from={alert.get('from', 'N/A')[:50]}")
+        
+        # Check in Supabase first, then fallback to in-memory set
+        in_supabase = check_processed_alert_in_supabase(alert_id)
+        in_memory = alert_id in processed_ids
+        
+        if i < 3:
+            print(f"    Check: in_supabase={in_supabase}, in_memory={in_memory}, will_skip={in_supabase or in_memory}")
+        
+        if in_supabase or in_memory:
+            already_processed_count += 1
+            continue
+        
+        # Parse the alert to get the actual content (only if not already processed)
         text, links = parse_raw_alert(alert)
         
-        # Extract search keywords from the email subject or metadata
+        # Extract search keywords from the parsed text
         # Handle different formats of Google Alerts
         if "[" in text and "]" in text:
             search_keywords = text.split("[")[1].split("]")[0].strip()
@@ -496,7 +779,8 @@ def check_google_alerts(days=4):
             'links': links,
             'search_keywords': search_keywords,
             'company_name': search_keywords.split(" ")[0],
-            'date': alert.get('date', '')
+            'date': alert.get('date', ''),
+            'alert_id': alert_id  # Include alert_id for saving later
         }
         
         # Check if this is a relevant alert
@@ -506,10 +790,18 @@ def check_google_alerts(days=4):
             # Add the relevance analysis to the alert object
             alert_obj['relevance_analysis'] = relevance_check['analysis']
             relevant_alerts.append(alert_obj)
+            # Mark as processed in Supabase
+            if save_processed_alert_to_supabase(alert_id):
+                new_alerts_saved += 1
         else:
-            irrelevant_count += 1    
+            irrelevant_count += 1
+            # Still mark as processed to avoid re-checking irrelevant alerts
+            if save_processed_alert_to_supabase(alert_id):
+                new_alerts_saved += 1
     
-    print(f"\nSummary: Found {len(relevant_alerts)} relevant alerts, filtered out {irrelevant_count} irrelevant ones.")
+    print(f"\nSummary: Found {len(relevant_alerts)} relevant alerts, filtered out {irrelevant_count} irrelevant ones, skipped {already_processed_count} already processed.")
+    if new_alerts_saved > 0:
+        print(f"  ✓ Saved {new_alerts_saved} new alert ID(s) to Supabase")
     return relevant_alerts
 
 def update_tracking_database(tracking_df, relevant_alert):
@@ -872,8 +1164,10 @@ def process_alerts(tracking_df, relevant_alerts):
     
     print(f"\nSummary: Processed {processed_count} new alerts and skipped {skipped_count} already processed alerts.")
     
-    # Note: We don't save here - let the main function save at the end to avoid multiple writes
-    # The main function will save after both alerts and funding search are complete
+    # Save updated tracking to Supabase
+    if processed_count > 0:
+        print("Saving updated tracking to Supabase...")
+        save_tracking_to_supabase(tracking_df)
     
     # Return both the updated DataFrame and the set of companies that were just updated
     return tracking_df, companies_updated_from_alerts
@@ -1567,6 +1861,11 @@ def search_updates_for_tracked_companies(tracking_df, days_back=30, skip_compani
         
         print()
     
+    # Save updated tracking to Supabase
+    if updates_found_count > 0:
+        print("Saving updated tracking to Supabase...")
+        save_tracking_to_supabase(tracking_df)
+    
     print("=" * 80)
     print(f"Summary: Found {updates_found_count} updates out of {len(companies_to_check)} companies checked")
     print("=" * 80)
@@ -1577,20 +1876,23 @@ def search_updates_for_tracked_companies(tracking_df, days_back=30, skip_compani
 
 def check_and_append_new_companies():
     """
-    Check for new companies in Notion that aren't in the tracking CSV yet.
-    Only appends new companies, doesn't recreate the entire file.
+    Check for new companies in Notion that aren't in the tracking database yet.
+    Only appends new companies, doesn't recreate the entire database.
     
     Returns:
         pandas.DataFrame: DataFrame with new companies that were added, or None if no new companies
     """
-    processed_path = os.path.join(WORKSPACE_ROOT, 'data', 'tracking', 'tracking_db.csv')
+    # Load existing data from Supabase (with CSV fallback)
+    processed_df = load_tracking_from_supabase()
     
-    if not os.path.exists(processed_path):
-        print("Tracking database doesn't exist. Use initialize_tracking_csv() first.")
-        return None
-    
-    # Load processed data
-    processed_df = pd.read_csv(processed_path)
+    # Fallback to CSV if Supabase is empty
+    if processed_df.empty:
+        processed_path = os.path.join(WORKSPACE_ROOT, 'data', 'tracking', 'tracking_db.csv')
+        if os.path.exists(processed_path):
+            processed_df = pd.read_csv(processed_path)
+        else:
+            print("Tracking database doesn't exist. Use initialize_tracking_csv() first.")
+            return None
     
     # Check if page_id column exists, if not try to match by company_name
     if 'page_id' in processed_df.columns:
@@ -1626,42 +1928,57 @@ def check_and_append_new_companies():
         if col not in enriched.columns:
             enriched[col] = ""
 
-    # Append new entries to processed file
-    updated_df = pd.concat([processed_df, enriched], ignore_index=True)
-    updated_df.to_csv(processed_path, index=False)
+    # Save new entries to Supabase
+    save_tracking_to_supabase(enriched)
+    
+    # Also append to CSV as backup
+    processed_path = os.path.join(WORKSPACE_ROOT, 'data', 'tracking', 'tracking_db.csv')
+    if os.path.exists(processed_path):
+        updated_df = pd.concat([processed_df, enriched], ignore_index=True)
+        updated_df.to_csv(processed_path, index=False)
+    else:
+        enriched.to_csv(processed_path, index=False)
 
-    print(f"Appended {len(enriched)} new entries to the processed file.")
+    print(f"Appended {len(enriched)} new entries to Supabase and CSV.")
     return enriched
     
     
 if __name__ == "__main__":
-    # Define tracking database path (use absolute path based on workspace root)
-    tracking_db_path = os.path.join(WORKSPACE_ROOT, 'data', 'tracking', 'tracking_db.csv')
+    # Step 1: Load tracking database from Supabase (with CSV fallback)
+    tracking_df = load_tracking_from_supabase()
     
-    # Step 1: Initialize CSV only if it doesn't exist, otherwise load existing
-    if not os.path.exists(tracking_db_path):
-        print("📂 Initializing tracking database from Notion...")
-        try:
-            tracking_df = initialize_tracking_csv()
-            print(f"✅ Created tracking database with {len(tracking_df)} companies")
-        except Exception as e:
-            print(f"❌ Error initializing tracking database: {e}")
-            import traceback
-            traceback.print_exc()
-            # Fallback to workspace-relative path if Notion fails
-            workspace_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            notion_export_path = os.path.join(workspace_root, 'data', 'tracking_names', 'notion_export_processed.csv')
-            if os.path.exists(notion_export_path):
-                print(f"   Falling back to Notion export: {notion_export_path}")
-                tracking_df = pd.read_csv(notion_export_path)
-            else:
-                print(f"❌ Error: Could not load from Notion or find export file at {notion_export_path}")
-                print(f"   Please ensure the tracking database exists or Notion connection is working.")
-                exit(1)
+    # If Supabase is empty, try to initialize from Notion or load from CSV
+    if tracking_df.empty:
+        tracking_db_path = os.path.join(WORKSPACE_ROOT, 'data', 'tracking', 'tracking_db.csv')
+        
+        if os.path.exists(tracking_db_path):
+            print(f"📂 Loading existing tracking database from CSV (Supabase empty)...")
+            tracking_df = pd.read_csv(tracking_db_path)
+            print(f"   Loaded {len(tracking_df)} companies from CSV")
+            # Try to migrate to Supabase
+            print("   Attempting to migrate to Supabase...")
+            save_tracking_to_supabase(tracking_df)
+        else:
+            print("📂 Initializing tracking database from Notion...")
+            try:
+                tracking_df = initialize_tracking_csv()
+                print(f"✅ Created tracking database with {len(tracking_df)} companies")
+            except Exception as e:
+                print(f"❌ Error initializing tracking database: {e}")
+                import traceback
+                traceback.print_exc()
+                # Fallback to workspace-relative path if Notion fails
+                workspace_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                notion_export_path = os.path.join(workspace_root, 'data', 'tracking_names', 'notion_export_processed.csv')
+                if os.path.exists(notion_export_path):
+                    print(f"   Falling back to Notion export: {notion_export_path}")
+                    tracking_df = pd.read_csv(notion_export_path)
+                else:
+                    print(f"❌ Error: Could not load from Notion or find export file at {notion_export_path}")
+                    print(f"   Please ensure the tracking database exists or Notion connection is working.")
+                    exit(1)
     else:
-        print(f"📂 Loading existing tracking database from {tracking_db_path}")
-        tracking_df = pd.read_csv(tracking_db_path)
-        print(f"   Loaded {len(tracking_df)} companies from existing database")
+        print(f"📂 Loaded {len(tracking_df)} companies from Supabase")
     
     # Step 2: Check Google Alerts for updates (only new alerts)
     relevant_alerts = check_google_alerts(days=6)
@@ -1670,7 +1987,7 @@ if __name__ == "__main__":
         print("\n✅ No new Google Alerts to process. Exiting.")
         sys.exit(0)
     
-    # Step 3: Process alerts and update CSV
+    # Step 3: Process alerts and update Supabase
     tracking_df, companies_updated_from_alerts = process_alerts(tracking_df, relevant_alerts)
     
     # Step 4: (Optional) Search for company updates using Parallel API
@@ -1678,22 +1995,20 @@ if __name__ == "__main__":
     # print(f"\nSkipping {len(companies_updated_from_alerts)} companies that were just updated from Google Alerts...")
     # tracking_df = search_updates_for_tracked_companies(tracking_df, days_back=30, skip_companies=companies_updated_from_alerts)
     
-    # Step 5: Save updated CSV (updates existing file, doesn't recreate)
+    # Step 5: Save updated CSV as backup (Supabase already updated in process_alerts)
     try:
+        tracking_db_path = os.path.join(WORKSPACE_ROOT, 'data', 'tracking', 'tracking_db.csv')
         os.makedirs(os.path.dirname(tracking_db_path), exist_ok=True)
         tracking_df.to_csv(tracking_db_path, index=False)
-        print(f"\n✅ Updated tracking database saved to {tracking_db_path}")
+        print(f"\n✅ Updated tracking database saved to Supabase and CSV backup")
         print(f"   Total companies in database: {len(tracking_df)}")
         
         # Verify the file was saved
         if os.path.exists(tracking_db_path):
             file_size = os.path.getsize(tracking_db_path)
-            print(f"   File size: {file_size:,} bytes")
-        else:
-            print(f"   ⚠️  Warning: File was not saved at {tracking_db_path}")
+            print(f"   CSV backup file size: {file_size:,} bytes")
     except Exception as e:
-        print(f"❌ Error saving tracking database: {e}")
-        import traceback
-        traceback.print_exc()
+        print(f"⚠️  Warning: Error saving CSV backup: {e}")
+        print(f"   Data was saved to Supabase successfully")
     
     

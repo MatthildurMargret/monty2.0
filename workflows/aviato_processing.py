@@ -1178,131 +1178,144 @@ def add_monty_data():
 def add_ai_scoring():
     """
     Add AI scoring to founder profiles using the scoring functions from ai_scoring module.
-    Scores: past_success_indication_score, startup_experience_score, company_tech_score, industry_expertise_score
+    
+    NOTE: The following scores have been disabled as they are not used by the ranker model:
+    - past_success_indication_score
+    - startup_experience_score
+    - company_tech_score
+    - industry_expertise_score
+    
+    These scores were only used for display in tree analysis and are not needed for ranking.
     """
-    from services.ai_scoring import (
-        past_success_indication_score,
-        startup_experience_score,
-        company_tech_score,
-        prompt_industry_score,
-    )
+    # DISABLED: These scores are not used by the ranker model and have been disabled to save API costs
+    # from services.ai_scoring import (
+    #     past_success_indication_score,
+    #     startup_experience_score,
+    #     company_tech_score,
+    #     prompt_industry_score,
+    # )
     from services.database import get_db_connection
 
-    conn = get_db_connection()
-    cursor = None
+    # DISABLED: No longer generating unused AI scores
+    logger.info("AI scoring disabled - scores not used by ranker model")
+    return
 
-    try:
-        cursor = conn.cursor()
-
-        # Fetch profiles that need AI scoring (limit to prevent API overload)
-        query = """
-        SELECT * FROM founders 
-        WHERE founder = true 
-        AND all_experiences IS NOT NULL 
-        AND (past_success_indication_score IS NULL 
-             OR startup_experience_score IS NULL 
-             OR company_tech_score IS NULL 
-             OR industry_expertise_score IS NULL)
-        """
-
-        cursor.execute(query)
-        profiles = cursor.fetchall()
-        column_names = [desc[0] for desc in cursor.description]
-
-        if not profiles:
-            logger.info("No profiles found that need AI scoring")
-            return
-        
-        logger.info("Profiles to score: %d", len(profiles))
-
-        processed_count = 0
-
-        for profile_row in profiles:
-            try:
-                # Convert to dictionary
-                profile_dict = dict(zip(column_names, profile_row))
-
-
-                # Prepare update data
-                update_data = {}
-
-                import time
-                
-                # 1. Past Success Indication Score
-                if profile_dict.get("past_success_indication_score") is None:
-                    try:
-                        score = past_success_indication_score(profile_dict, json=True)
-                        update_data["past_success_indication_score"] = score
-                        time.sleep(0.5)  # Rate limiting delay
-                    except Exception as e:
-                        logger.warning("Error scoring past success: %s", e, exc_info=True)
-
-                # 2. Startup Experience Score
-                if profile_dict.get("startup_experience_score") is None:
-                    try:
-                        score = startup_experience_score(profile_dict, json=True)
-                        update_data["startup_experience_score"] = score
-                        time.sleep(0.5)  # Rate limiting delay
-                    except Exception as e:
-                        logger.warning("Error scoring startup experience: %s", e, exc_info=True)
-
-                # 3. Company Tech Score
-                if profile_dict.get("company_tech_score") is None:
-                    try:
-                        score = company_tech_score(profile_dict, json=True)
-                        update_data["company_tech_score"] = score
-                        time.sleep(0.5)  # Rate limiting delay
-                    except Exception as e:
-                        logger.warning("Error scoring company tech: %s", e, exc_info=True)
-
-                # 4. Industry Expertise Score
-                if profile_dict.get("industry_expertise_score") is None:
-                    try:
-                        score = prompt_industry_score(profile_dict, json=True)
-                        update_data["industry_expertise_score"] = score
-                        time.sleep(0.5)  # Rate limiting delay
-                    except Exception as e:
-                        logger.warning("Error scoring industry expertise: %s", e, exc_info=True)
-
-                # Update the profile if we have scores to add
-                if update_data:
-
-                    try:
-                        # Build the SET clause for update
-                        set_clause = ", ".join([f'"{col}" = %s' for col in update_data.keys()])
-                        update_query = f"""
-                            UPDATE founders
-                            SET {set_clause}
-                            WHERE id = %s
-                        """
-                        values = list(update_data.values()) + [profile_dict["id"]]
-                        cursor.execute(update_query, values)
-
-                        if cursor.rowcount > 0:
-                            conn.commit()
-                            processed_count += 1
-                        else:
-                            logger.warning("No row found for id=%s (url=%s)", profile_dict['id'], profile_dict.get('profile_url'))
-
-                    except Exception as e:
-                        conn.rollback()
-                        logger.error("Error updating profile %s: %s", profile_dict.get('name', 'Unknown'), e, exc_info=True)
-                else:
-                    logger.debug("No scores needed for: %s", profile_dict.get('name', 'Unknown'))
-
-            except Exception as e:
-                logger.warning("Error processing profile %s: %s", profile_dict.get('name', 'Unknown'), e, exc_info=True)
-                continue
-
-        logger.info("Processed %d profiles in add_ai_scoring", processed_count)
-
-    except Exception as e:
-        logger.error("Database error in add_ai_scoring: %s", e, exc_info=True)
-    finally:
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
+    # OLD CODE (kept for reference):
+    # conn = get_db_connection()
+    # cursor = None
+    # 
+    # try:
+    #     cursor = conn.cursor()
+    # 
+    #     # Fetch profiles that need AI scoring (limit to prevent API overload)
+    #     query = """
+    #     SELECT * FROM founders 
+    #     WHERE founder = true 
+    #     AND all_experiences IS NOT NULL 
+    #     AND (past_success_indication_score IS NULL 
+    #          OR startup_experience_score IS NULL 
+    #          OR company_tech_score IS NULL 
+    #          OR industry_expertise_score IS NULL)
+    #     """
+    # 
+    #     cursor.execute(query)
+    #     profiles = cursor.fetchall()
+    #     column_names = [desc[0] for desc in cursor.description]
+    # 
+    #     if not profiles:
+    #         logger.info("No profiles found that need AI scoring")
+    #         return
+    #     
+    #     logger.info("Profiles to score: %d", len(profiles))
+    # 
+    #     processed_count = 0
+    # 
+    #     for profile_row in profiles:
+    #         try:
+    #             # Convert to dictionary
+    #             profile_dict = dict(zip(column_names, profile_row))
+    # 
+    # 
+    #             # Prepare update data
+    #             update_data = {}
+    # 
+    #             import time
+    #             
+    #             # 1. Past Success Indication Score
+    #             if profile_dict.get("past_success_indication_score") is None:
+    #                 try:
+    #                     score = past_success_indication_score(profile_dict, json=True)
+    #                     update_data["past_success_indication_score"] = score
+    #                     time.sleep(0.5)  # Rate limiting delay
+    #                 except Exception as e:
+    #                     logger.warning("Error scoring past success: %s", e, exc_info=True)
+    # 
+    #             # 2. Startup Experience Score
+    #             if profile_dict.get("startup_experience_score") is None:
+    #                 try:
+    #                     score = startup_experience_score(profile_dict, json=True)
+    #                     update_data["startup_experience_score"] = score
+    #                     time.sleep(0.5)  # Rate limiting delay
+    #                 except Exception as e:
+    #                     logger.warning("Error scoring startup experience: %s", e, exc_info=True)
+    # 
+    #             # 3. Company Tech Score
+    #             if profile_dict.get("company_tech_score") is None:
+    #                 try:
+    #                     score = company_tech_score(profile_dict, json=True)
+    #                     update_data["company_tech_score"] = score
+    #                     time.sleep(0.5)  # Rate limiting delay
+    #                 except Exception as e:
+    #                     logger.warning("Error scoring company tech: %s", e, exc_info=True)
+    # 
+    #             # 4. Industry Expertise Score
+    #             if profile_dict.get("industry_expertise_score") is None:
+    #                 try:
+    #                     score = prompt_industry_score(profile_dict, json=True)
+    #                     update_data["industry_expertise_score"] = score
+    #                     time.sleep(0.5)  # Rate limiting delay
+    #                 except Exception as e:
+    #                     logger.warning("Error scoring industry expertise: %s", e, exc_info=True)
+    # 
+    #             # Update the profile if we have scores to add
+    #             if update_data:
+    # 
+    #                 try:
+    #                     # Build the SET clause for update
+    #                     set_clause = ", ".join([f'"{col}" = %s' for col in update_data.keys()])
+    #                     update_query = f"""
+    #                         UPDATE founders
+    #                         SET {set_clause}
+    #                         WHERE id = %s
+    #                     """
+    #                     values = list(update_data.values()) + [profile_dict["id"]]
+    #                     cursor.execute(update_query, values)
+    # 
+    #                     if cursor.rowcount > 0:
+    #                         conn.commit()
+    #                         processed_count += 1
+    #                     else:
+    #                         logger.warning("No row found for id=%s (url=%s)", profile_dict['id'], profile_dict.get('profile_url'))
+    # 
+    #                 except Exception as e:
+    #                     conn.rollback()
+    #                     logger.error("Error updating profile %s: %s", profile_dict.get('name', 'Unknown'), e, exc_info=True)
+    #             else:
+    #                 logger.debug("No scores needed for: %s", profile_dict.get('name', 'Unknown'))
+    # 
+    #         except Exception as e:
+    #             logger.warning("Error processing profile %s: %s", profile_dict.get('name', 'Unknown'), e, exc_info=True)
+    #             continue
+    # 
+    #     logger.info("Processed %d profiles in add_ai_scoring", processed_count)
+    # 
+    # except Exception as e:
+    #     logger.error("Database error in add_ai_scoring: %s", e, exc_info=True)
+    # finally:
+    #     if cursor:
+    #         cursor.close()
+    #     if conn:
+    #         conn.close()
 
 def add_tree_analysis():
     # Get the new profiles that dont have tree analysis

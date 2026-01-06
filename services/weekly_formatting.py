@@ -6,7 +6,7 @@ import pandas as pd
 from services.openai_api import summarize_company_recommendation
 
 def generate_html(preseed_df, tracking_df, recs, pipeline_dict,
-                  greeting_text=None, commerce_df=None,
+                  greeting_text=None, closing_text=None, commerce_df=None,
                   healthcare_df=None, fintech_df=None, profile_recs=None, test=False):
     """
     Generate the complete HTML newsletter.
@@ -15,6 +15,7 @@ def generate_html(preseed_df, tracking_df, recs, pipeline_dict,
       - Deals (preseeds): old format
       - Tracking: old format
       - Pipeline Insights: stats + founder profiles
+      - Closing
     """
 
     current_date = datetime.now().strftime("%B %d, %Y")
@@ -47,20 +48,30 @@ def generate_html(preseed_df, tracking_df, recs, pipeline_dict,
                     investors = re.sub(r',\s*', ', ', investors)  # Normalize spacing
             vertical = row["Vertical"] if row["Vertical"] != "Unknown" else ""
             link = row["Link"] if row["Link"] != "No link found" else ""
-            founders = row["Founders"] if pd.notna(row["Founders"]) else ""
+            founders_raw = row["Founders"] if pd.notna(row["Founders"]) else ""
+            
+            # Check for founder_linkedin_url column (handle both cases: CSV might have different column names)
+            founder_linkedin_url = ""
+            if "founder_linkedin_url" in row.index:
+                founder_linkedin_url = row["founder_linkedin_url"] if pd.notna(row["founder_linkedin_url"]) else ""
+            elif "Founder LinkedIn URL" in row.index:
+                founder_linkedin_url = row["Founder LinkedIn URL"] if pd.notna(row["Founder LinkedIn URL"]) else ""
+            
             in_newsletter = False
+            founders_parsed = None
 
-            if founders != "":
+            if founders_raw != "":
                 try:
-                    founders = ast.literal_eval(founders)
-                    for founder in founders:
-                        name = founder["Name"]
-                        if (
-                            commerce_df is not None and name in commerce_df["name"].values
-                            or healthcare_df is not None and name in healthcare_df["name"].values
-                            or fintech_df is not None and name in fintech_df["name"].values
-                        ):
-                            in_newsletter = True
+                    founders_parsed = ast.literal_eval(founders_raw)
+                    if isinstance(founders_parsed, list):
+                        for founder in founders_parsed:
+                            name = founder.get("Name", "") if isinstance(founder, dict) else str(founder)
+                            if name and (
+                                commerce_df is not None and name in commerce_df["name"].values
+                                or healthcare_df is not None and name in healthcare_df["name"].values
+                                or fintech_df is not None and name in fintech_df["name"].values
+                            ):
+                                in_newsletter = True
                 except Exception:
                     pass
 
@@ -70,11 +81,75 @@ def generate_html(preseed_df, tracking_df, recs, pipeline_dict,
                 f" <div><span class='tag-founder'>Founder info and LinkedIn in section below!</span></div>"
                 if in_newsletter else ""
             )
+            
+            # Build founder info HTML if we have both founders and LinkedIn URLs
+            founder_info_html = ""
+            if founders_raw and founder_linkedin_url and str(founder_linkedin_url).strip() and str(founder_linkedin_url).strip().lower() not in ["nan", "none", ""]:
+                try:
+                    # Parse founders (could be string or list)
+                    founder_names = []
+                    
+                    # Use already parsed founders if available, otherwise parse from raw
+                    founders_to_parse = founders_parsed if founders_parsed is not None else founders_raw
+                    
+                    if isinstance(founders_to_parse, str):
+                        # Try to parse as Python list first
+                        try:
+                            parsed = ast.literal_eval(founders_to_parse)
+                            if isinstance(parsed, list):
+                                for f in parsed:
+                                    if isinstance(f, dict) and "Name" in f:
+                                        founder_names.append(f["Name"])
+                                    elif isinstance(f, str):
+                                        founder_names.append(f)
+                            else:
+                                # Single string value
+                                founder_names = [founders_to_parse]
+                        except:
+                            # If parsing fails, treat as comma-separated string
+                            founder_names = [f.strip() for f in founders_to_parse.split(',') if f.strip()]
+                    elif isinstance(founders_to_parse, list):
+                        for f in founders_to_parse:
+                            if isinstance(f, dict) and "Name" in f:
+                                founder_names.append(f["Name"])
+                            elif isinstance(f, str):
+                                founder_names.append(f)
+                    
+                    # Only proceed if we have founder names
+                    if founder_names:
+                        # Parse LinkedIn URLs (comma-separated if multiple)
+                        linkedin_urls = [url.strip() for url in str(founder_linkedin_url).split(',') if url.strip() and url.strip().lower() not in ["nan", "none", ""]]
+                        
+                        # Match founders with LinkedIn URLs (only show if we have both)
+                        founder_links = []
+                        for i, name in enumerate(founder_names):
+                            if i < len(linkedin_urls):
+                                url = linkedin_urls[i]
+                                # Ensure URL has proper protocol
+                                if url and not url.startswith('http'):
+                                    url = f"https://{url}"
+                                founder_links.append((name, url))
+                        
+                        # Build HTML for founder info (only if we have at least one name+URL pair)
+                        if founder_links:
+                            founder_items = []
+                            for name, url in founder_links:
+                                if url:
+                                    founder_items.append(f"<strong>{name}</strong> <a href='{url}' target='_blank' class='link' style='font-size: 12px; color: #161F6D; text-decoration: none;'>LinkedIn</a>")
+                            
+                            if founder_items:
+                                founder_info_html = f"""
+                <div style="margin-top: 8px; padding-left: 10px; font-size: 13px; color: #555;">
+                    <em>Founder: {', '.join(founder_items)}</em>
+                </div>"""
+                except Exception:
+                    # If parsing fails, silently skip founder info
+                    pass
 
             categorized_profiles[category].append(f"""
                 <li>
                     <strong><a href="{link}" target="_blank" class="link">{company}</a></strong>  
-                    ({vertical}) raised <strong>{amount}</strong> in {funding_round}{investors_html}{founder_html}
+                    ({vertical}) raised <strong>{amount}</strong> in {funding_round}{investors_html}{founder_html}{founder_info_html}
                 </li>
             """)
 
@@ -234,6 +309,109 @@ def generate_html(preseed_df, tracking_df, recs, pipeline_dict,
                     seen.add(out)
                     cleaned.append(out)
             return '<br>'.join(cleaned)
+        
+        # Helper: parse and format deals from recent_news for the "Why?" section
+        def parse_and_format_deals_for_why_section(news_text: str, months_back: int = 3) -> str:
+            """
+            Parse deals from recent_news string and format them for the "Why?" section.
+            Only includes deals from the past N months.
+            
+            Args:
+                news_text: The recent_news string from tree node
+                months_back: Number of months to look back (default: 3)
+            
+            Returns:
+                Formatted string with deals, or empty string if no deals found
+            """
+            if not isinstance(news_text, str) or not news_text.strip():
+                return ""
+            
+            from datetime import datetime, timedelta
+            
+            # Calculate cutoff date (3 months ago)
+            cutoff_date = datetime.now() - timedelta(days=months_back * 30)
+            
+            # Parse deal entries - format: [YYYY-MM-DD] Company raised $Amount in Round for Description. Investors: Investors
+            # More flexible pattern to handle variations
+            deal_pattern = re.compile(
+                r'\[(\d{4}-\d{2}-\d{2})\]\s*'  # Date in brackets
+                r'([^\[\]]+?)\s+raised\s+'      # Company name (anything before "raised")
+                r'([^\s]+(?:\s+[^\s]+)*?)\s+'   # Amount (can have spaces like "$10 M")
+                r'in\s+([^f]+?)\s+'              # Round type (everything between "in" and "for")
+                r'for\s+([^\.]+?)(?:\.|$)',      # Description (everything after "for" until period or end
+                re.IGNORECASE
+            )
+            
+            deals = []
+            lines = news_text.split('\n')
+            
+            for line in lines:
+                line = line.strip()
+                if not line:
+                    continue
+                
+                # Skip path/header lines that don't start with date bracket
+                if line.startswith('[') and not re.match(r'^\[\d{4}-\d{2}-\d{2}\]', line):
+                    continue
+                
+                # Try to match deal pattern
+                match = deal_pattern.search(line)
+                if match:
+                    date_str = match.group(1)
+                    company = match.group(2).strip()
+                    amount = match.group(3).strip()
+                    # round_type = match.group(4).strip()  # Not used in output but parsed for completeness
+                    
+                    try:
+                        deal_date = datetime.strptime(date_str, '%Y-%m-%d')
+                        # Only include deals from past 3 months
+                        if deal_date >= cutoff_date:
+                            # Calculate relative time
+                            days_ago = (datetime.now() - deal_date).days
+                            
+                            if days_ago < 7:
+                                time_str = "last week" if days_ago >= 1 else "this week"
+                            elif days_ago < 30:
+                                weeks = days_ago // 7
+                                time_str = f"{weeks} week{'s' if weeks > 1 else ''} ago"
+                            elif days_ago < 90:
+                                months = days_ago // 30
+                                time_str = f"{months} month{'s' if months > 1 else ''} ago"
+                            else:
+                                time_str = f"{days_ago // 30} months ago"
+                            
+                            # Format amount nicely - ensure it has $ if it's a number
+                            amount_clean = amount.strip()
+                            # Remove extra spaces
+                            amount_clean = re.sub(r'\s+', ' ', amount_clean)
+                            # Ensure $ prefix if it looks like a number
+                            if amount_clean and not amount_clean.startswith('$') and not amount_clean.lower() in ['undisclosed', 'unknown']:
+                                # Check if it starts with a number
+                                if re.match(r'^\d', amount_clean):
+                                    amount_clean = f"${amount_clean}"
+                            
+                            deals.append({
+                                'company': company,
+                                'amount': amount_clean,
+                                'time': time_str,
+                                'date': deal_date
+                            })
+                    except (ValueError, TypeError) as e:
+                        # Skip if date parsing fails
+                        continue
+            
+            # Sort by date (most recent first)
+            deals.sort(key=lambda x: x['date'], reverse=True)
+            
+            # Format deals string
+            if deals:
+                deal_strings = []
+                for deal in deals[:5]:  # Limit to 5 most recent deals
+                    deal_strings.append(f"{deal['company']} raised {deal['amount']} {deal['time']}")
+                
+                return f"Notable investments in this space: {', '.join(deal_strings)}."
+            
+            return ""
 
         # Helper: get up to 5 company names from pipeline for a given subcategory
         def get_pipeline_company_names(subcat_name, limit=5):
@@ -389,11 +567,12 @@ def generate_html(preseed_df, tracking_df, recs, pipeline_dict,
                     subcategory=sub.get("subcategory", "")
                 )
 
-                # Build deal activity box (same style as why-box) if we have recent news
+                # Build deal activity box (same style as why-box) if we have recent news (for separate display)
                 deal_box_html = ""
                 recent_news = ""
                 if isinstance(deals, dict):
                     recent_news = deals.get('recent_news', '') or ''
+                
                 if isinstance(recent_news, str) and recent_news.strip():
                     # Clean, dedupe and reformat dates to end of line
                     deal_content = format_recent_news(recent_news)
@@ -402,6 +581,9 @@ def generate_html(preseed_df, tracking_df, recs, pipeline_dict,
         <strong>Recent deal activity:</strong> {deal_content}
     </div>
                     """
+
+                # Build the "Why?" section
+                why_section_html = f"<strong>Why {company_name}? </strong> {context_blurb}"
 
                 insights_html += f"""
 <div class='company-card'>
@@ -419,7 +601,7 @@ def generate_html(preseed_df, tracking_df, recs, pipeline_dict,
     </div>
     <p class='description'>{short_description}</p>
     <div class='why-box'>
-        <strong>Why {company_name}? </strong> {context_blurb}
+        {why_section_html}
     </div>
 </div>
 """
@@ -433,6 +615,12 @@ def generate_html(preseed_df, tracking_df, recs, pipeline_dict,
     # ------------------------
     if not greeting_text:
         greeting_text = "Wishing everyone a happy Friday and a wonderful weekend! – Monty"
+    
+    # ------------------------
+    # Closing
+    # ------------------------
+    if not closing_text:
+        closing_text = 'Reminder that you can check out all previous recommendations and deals on <a href="https://monty.up.railway.app/" target="_blank" class="link" style="color: #161F6D; text-decoration: underline;">my website</a>.'
 
     # ------------------------
     # Assemble full HTML
@@ -560,7 +748,7 @@ def generate_html(preseed_df, tracking_df, recs, pipeline_dict,
         
         return f"""
         <div class="section">
-            <h3>🎯 Talent Recommendations</h3>
+            <h3>Talent Recommendations</h3>
             <p style="margin-bottom: 15px; color: #555;">Here are some interesting profiles we came across this week:</p>
             {profiles_html}
         </div>
@@ -743,6 +931,8 @@ def generate_html(preseed_df, tracking_df, recs, pipeline_dict,
         {profile_recs_html}
 
         {recs_html}
+
+        <p class="text-box">{closing_text}</p>
 
     </body>
     </html>

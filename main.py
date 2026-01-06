@@ -62,7 +62,7 @@ class MontyApp:
             setup_aviato_logging()
             
             # Run the full processing pipeline
-            process_profiles_aviato(max_profiles=1000)
+            process_profiles_aviato(max_profiles=300)
             add_monty_data()
             add_ai_scoring()
             add_tree_analysis()

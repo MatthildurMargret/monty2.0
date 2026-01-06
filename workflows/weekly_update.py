@@ -79,9 +79,48 @@ def get_recent_deals():
     return deals
 
 def get_tracking():
+    """Get tracking updates from Supabase (with CSV fallback).
+    
+    Returns:
+        pandas.DataFrame: DataFrame with tracking updates from the last 5 days
+    """
+    # Try to import tracking functions
+    try:
+        from workflows.tracking import load_tracking_from_supabase
+    except ImportError:
+        print("⚠️  Could not import tracking functions, falling back to CSV")
+        load_tracking_from_supabase = None
+    
+    # Try Supabase first
+    if load_tracking_from_supabase:
+        try:
+            df = load_tracking_from_supabase()
+            if not df.empty:
+                # Filter for updates from last 5 days
+                last_update = (datetime.now() - timedelta(days=5)).strftime("%Y-%m-%d")
+                
+                # Filter for companies with updates
+                new_updates = df[df['most_recent_update'].notna() & (df['most_recent_update'] != '')]
+                
+                if 'last_checked' in new_updates.columns:
+                    # Filter by last_checked date
+                    new_updates['last_checked'] = pd.to_datetime(new_updates['last_checked'], errors='coerce')
+                    new_updates = new_updates[new_updates['last_checked'] >= pd.Timestamp(last_update)]
+                elif 'update_date' in new_updates.columns:
+                    # Fallback to update_date
+                    new_updates['update_date'] = pd.to_datetime(new_updates['update_date'], errors='coerce')
+                    new_updates = new_updates[new_updates['update_date'] >= pd.Timestamp(last_update)]
+                
+                # Remove duplicates
+                new_updates = new_updates.drop_duplicates(subset='company_name', keep='first')
+                
+                return new_updates
+        except Exception as e:
+            print(f"⚠️  Error loading from Supabase: {e}, falling back to CSV")
+    
+    # Fallback to CSV
     tracking_file = 'data/tracking/tracking_db.csv'
     
-    # Handle missing file gracefully
     if not os.path.exists(tracking_file):
         print(f"⚠️  Tracking file not found at {tracking_file}, returning empty DataFrame")
         return pd.DataFrame()
@@ -102,11 +141,11 @@ def get_tracking():
 
     if 'last_checked' in new_updates.columns:
         # Try using last_checked instead if available
-        new_updates['last_checked'] = pd.to_datetime(new_updates['last_checked'])
+        new_updates['last_checked'] = pd.to_datetime(new_updates['last_checked'], errors='coerce')
         new_updates = new_updates[new_updates['last_checked'] >= pd.Timestamp(last_update)]
     elif 'most_recent_update_date' in new_updates.columns:
         # Convert to datetime if it exists
-        new_updates['most_recent_update_date'] = pd.to_datetime(new_updates['most_recent_update_date'])
+        new_updates['most_recent_update_date'] = pd.to_datetime(new_updates['most_recent_update_date'], errors='coerce')
         # Filter by date if the column exists
         new_updates = new_updates[new_updates['most_recent_update_date'] >= pd.Timestamp(last_update)]
 
@@ -371,248 +410,209 @@ def get_recs():
 
     pipeline_dict = get_pipeline_stats()
     subcategories = find_relevant_information(pipeline_dict)
-    top_founders = []
 
-    # Load ranker model for ranking founders
+    # --------------------------------------------------
+    # Load ranker model
+    # --------------------------------------------------
     try:
         import xgboost as xgb
     except ImportError:
         xgb = None
-    
+
     model_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data', 'models')
     print(f"\nLoading ranker-only model from {model_dir}...")
     ranker_inference = None
-    
+
     if xgb is None:
         print("❌ xgboost not available, will fall back to past_success_indication_score sorting")
     else:
         try:
-            # Load ranker-only model and metadata
             ranker_path = os.path.join(model_dir, 'ranker_only_xgb.json')
             ranker_metadata_path = os.path.join(model_dir, 'ranker_only_feature_metadata.json')
             ranker_model_metadata_path = os.path.join(model_dir, 'ranker_only_metadata.json')
-            
+
             if not os.path.exists(ranker_path):
                 print(f"❌ Ranker-only model not found at {ranker_path}")
-                print("Will fall back to past_success_indication_score sorting")
             else:
-                # Load metadata
                 with open(ranker_metadata_path, 'r') as f:
                     ranker_metadata = json.load(f)
                 with open(ranker_model_metadata_path, 'r') as f:
                     ranker_model_metadata = json.load(f)
-                
-                # Load ranker model
+
                 ranker = xgb.XGBRanker()
                 ranker.load_model(ranker_path)
-                
-                # Get normalization parameters
-                norm_params = ranker_model_metadata.get('ranker_normalization', {})
-                ranker_min = norm_params.get('min')
-                ranker_max = norm_params.get('max')
-                
+
+                norm = ranker_model_metadata.get('ranker_normalization', {})
                 ranker_inference = {
                     'ranker': ranker,
                     'metadata': ranker_metadata,
-                    'ranker_min': ranker_min,
-                    'ranker_max': ranker_max
+                    'ranker_min': norm.get('min'),
+                    'ranker_max': norm.get('max')
                 }
-                
+
                 print("✅ Ranker-only model loaded successfully")
-                print(f"  Ranker normalization: min={ranker_min}, max={ranker_max}")
+                print(f"  Ranker normalization: min={norm.get('min')}, max={norm.get('max')}")
+
         except Exception as e:
             print(f"❌ Error loading ranker-only model: {e}")
-            print("Will fall back to past_success_indication_score sorting")
             ranker_inference = None
 
+    # --------------------------------------------------
+    # Iterate categories / subcategories
+    # --------------------------------------------------
     for category, subs in subcategories.items():
         print(f"Category: {category}")
+
         for sub in subs:
             print(f"  Subcategory: {sub['subcategory']} ({sub['count']} companies)")
-            
-            # Map to old taxonomy paths
+
+            # Map taxonomy
             new_path = sub['subcategory']
             old_paths = get_all_matching_old_paths(new_path)
             mapped_paths = old_paths if old_paths else [new_path]
-            
-            # Query all founders matching this subcategory (no hardcoded filters)
+
+            # Load founders
             founders_list = []
             for path in mapped_paths:
-                founders_df = get_founders_by_category_path(path)
-                if not founders_df.empty:
-                    founders_list.append(founders_df)
-            
-            # Concatenate all founders into one DataFrame
-            if founders_list:
-                # Suppress FutureWarning for DataFrame concatenation (harmless warning about empty/all-NA columns)
-                with warnings.catch_warnings():
-                    warnings.filterwarnings('ignore', category=FutureWarning, message='.*concatenation.*')
-                    all_founders_df = pd.concat(founders_list, ignore_index=True)
-            else:
-                all_founders_df = pd.DataFrame()
-            
-            # Remove duplicates
-            if not all_founders_df.empty:
-                all_founders_df = all_founders_df.drop_duplicates(subset=['name', 'company_name'])
-                all_founders_df = all_founders_df.reset_index(drop=True)
-            
-            # Use ranker model to select top founder
-            if not all_founders_df.empty:
-                print(f"    Found {len(all_founders_df)} founders, ranking with model...")
-                
-                # Use ranker model if available
-                if ranker_inference is not None:
-                    try:
-                        from test_models import prepare_test_features
-                        
-                        # Prepare features for all founders
-                        # Use copy to avoid modifying original dataframe
-                        founders_with_features = prepare_test_features(all_founders_df.copy(), verbose=False)
-                        
-                        # Helper function to extract features from row (same as recommendations.py)
-                        def extract_features_from_row(row, metadata):
-                            """Extract features from a single row using metadata."""
-                            def flatten_embedding(embedding):
-                                """Flatten an embedding array/list into a numpy array."""
-                                if embedding is None or (isinstance(embedding, float) and np.isnan(embedding)):
-                                    return np.zeros(1536, dtype=np.float32)
-                                if isinstance(embedding, (list, np.ndarray)):
-                                    arr = np.array(embedding, dtype=np.float32)
-                                    if arr.ndim == 1:
-                                        return arr
-                                    else:
-                                        return arr.flatten()
-                                return np.zeros(1536, dtype=np.float32)
-                            
-                            feature_vec = []
-                            
-                            # Text embedding group 1
-                            text_emb1 = flatten_embedding(row.get('text_embedding_group1'))
-                            text_emb_dim = metadata.get('text_embedding_group1_dim', 1536)
-                            if len(text_emb1) != text_emb_dim:
-                                if len(text_emb1) < text_emb_dim:
-                                    text_emb1 = np.pad(text_emb1, (0, text_emb_dim - len(text_emb1)), 'constant')
-                                else:
-                                    text_emb1 = text_emb1[:text_emb_dim]
-                            feature_vec.extend(text_emb1.tolist())
-                            
-                            # Text embedding group 2
-                            text_emb2 = flatten_embedding(row.get('text_embedding_group2'))
-                            text_emb_dim2 = metadata.get('text_embedding_group2_dim', 1536)
-                            if len(text_emb2) != text_emb_dim2:
-                                if len(text_emb2) < text_emb_dim2:
-                                    text_emb2 = np.pad(text_emb2, (0, text_emb_dim2 - len(text_emb2)), 'constant')
-                                else:
-                                    text_emb2 = text_emb2[:text_emb_dim2]
-                            feature_vec.extend(text_emb2.tolist())
-                            
-                            # Experience embedding
-                            exp_emb = flatten_embedding(row.get('experience_embedding'))
-                            exp_emb_dim = metadata.get('experience_embedding_dim', 1536)
-                            if len(exp_emb) != exp_emb_dim:
-                                if len(exp_emb) < exp_emb_dim:
-                                    exp_emb = np.pad(exp_emb, (0, exp_emb_dim - len(exp_emb)), 'constant')
-                                else:
-                                    exp_emb = exp_emb[:exp_emb_dim]
-                            feature_vec.extend(exp_emb.tolist())
-                            
-                            # Numeric features
-                            for feat in metadata['numeric_features']:
-                                val = row.get(feat, 0.0)
-                                if pd.isna(val):
-                                    val = 0.0
-                                feature_vec.append(float(val))
-                            
-                            # Boolean features
-                            for feat in metadata['boolean_features']:
-                                val = row.get(feat, 0)
-                                if pd.isna(val):
-                                    val = 0
-                                feature_vec.append(int(val))
-                            
-                            return np.array(feature_vec, dtype=np.float32).reshape(1, -1)
-                        
-                        # Get ranker predictions for each founder
-                        predictions = []
-                        ranker = ranker_inference['ranker']
-                        metadata = ranker_inference['metadata']
-                        ranker_min = ranker_inference['ranker_min']
-                        ranker_max = ranker_inference['ranker_max']
-                        
-                        for idx, row in founders_with_features.iterrows():
-                            try:
-                                # Extract features
-                                X = extract_features_from_row(row, metadata)
-                                
-                                # Get raw ranker score
-                                raw_score = ranker.predict(X)[0]
-                                
-                                # Normalize ranker score to [0, 1] range
-                                if ranker_min is not None and ranker_max is not None and ranker_max > ranker_min:
-                                    normalized_score = (raw_score - ranker_min) / (ranker_max - ranker_min)
-                                    normalized_score = np.clip(normalized_score, 0.0, 1.0)
-                                else:
-                                    # Fallback: sigmoid normalization
-                                    normalized_score = 1.0 / (1.0 + np.exp(-raw_score))
-                                
-                                predictions.append(float(normalized_score))
-                            except Exception as e:
-                                print(f"      Warning: Error predicting for {row.get('name', 'unknown')}: {e}")
-                                predictions.append(0.0)  # Default to 0 if prediction fails
-                        
-                        # Add ranker_score to founders dataframe
-                        all_founders_df['ranker_score'] = predictions
-                        
-                        # Sort by ranker_score (descending)
-                        all_founders_df.sort_values(by='ranker_score', ascending=False, inplace=True)
-                        
-                        # Select top founder
-                        top_founder = all_founders_df.iloc[0].to_dict()
-                        print(f"    Selected top founder (ranker_score: {top_founder.get('ranker_score', 'N/A'):.4f})")
-                        sub['top_founder'] = top_founder
-                        
-                    except Exception as e:
-                        print(f"    ⚠️  Error using ranker model: {e}")
-                        print("    Falling back to past_success_indication_score sorting")
-                        # Fallback: Sort by past_success_indication_score
-                        all_founders_df.sort_values(
-                            by='past_success_indication_score',
-                            ascending=False,
-                            inplace=True
-                        )
-                        top_founder = all_founders_df.iloc[0].to_dict()
-                        sub['top_founder'] = top_founder
-                else:
-                    # Fallback: Sort by past_success_indication_score
+                df = get_founders_by_category_path(path)
+                if not df.empty:
+                    founders_list.append(df)
+
+            if not founders_list:
+                sub['top_founder'] = None
+                continue
+
+            with warnings.catch_warnings():
+                warnings.filterwarnings('ignore', category=FutureWarning)
+                all_founders_df = pd.concat(founders_list, ignore_index=True)
+
+            all_founders_df = (
+                all_founders_df
+                .drop_duplicates(subset=['name', 'company_name'])
+                .reset_index(drop=True)
+            )
+
+            print(f"    Found {len(all_founders_df)} founders")
+
+            # --------------------------------------------------
+            # Rank with model (or fallback)
+            # --------------------------------------------------
+            if ranker_inference is not None:
+                try:
+                    from test_models import prepare_test_features
+
+                    founders_with_features = prepare_test_features(
+                        all_founders_df.copy(),
+                        verbose=False
+                    )
+
+                    # --- Build feature matrix ---
+                    X_all = []
+                    valid_indices = []
+
+                    def flatten_embedding(emb):
+                        if emb is None or (isinstance(emb, float) and np.isnan(emb)):
+                            return np.zeros(1536, dtype=np.float32)
+                        arr = np.asarray(emb, dtype=np.float32)
+                        return arr.flatten()[:1536]
+
+                    metadata = ranker_inference['metadata']
+
+                    for idx, row in founders_with_features.iterrows():
+                        try:
+                            vec = []
+
+                            vec.extend(flatten_embedding(row.get('text_embedding_group1')))
+                            vec.extend(flatten_embedding(row.get('text_embedding_group2')))
+                            vec.extend(flatten_embedding(row.get('experience_embedding')))
+
+                            for f in metadata['numeric_features']:
+                                v = row.get(f, 0.0)
+                                vec.append(float(0.0 if pd.isna(v) else v))
+
+                            for f in metadata['boolean_features']:
+                                v = row.get(f, 0)
+                                vec.append(int(0 if pd.isna(v) else v))
+
+                            X_all.append(vec)
+                            valid_indices.append(idx)
+
+                        except Exception:
+                            continue
+
+                    if not X_all:
+                        raise RuntimeError("No valid feature rows for ranking")
+
+                    X_all = np.asarray(X_all, dtype=np.float32)
+
+                    # --- Predict ---
+                    raw_scores = ranker_inference['ranker'].predict(X_all)
+
+                    # --- Normalize ---
+                    rmin = ranker_inference['ranker_min']
+                    rmax = ranker_inference['ranker_max']
+
+                    if rmin is not None and rmax is not None and rmax > rmin:
+                        scores = (raw_scores - rmin) / (rmax - rmin)
+                        scores = np.clip(scores, 0.0, 1.0)
+                    else:
+                        scores = 1.0 / (1.0 + np.exp(-raw_scores))
+
+                    founders_with_features['ranker_score'] = 0.0
+                    founders_with_features.loc[valid_indices, 'ranker_score'] = scores
+
+                    founders_with_features.sort_values(
+                        by='ranker_score',
+                        ascending=False,
+                        inplace=True
+                    )
+
+                    top_founder = founders_with_features.iloc[0].to_dict()
+                    sub['top_founder'] = top_founder
+
+                    print(
+                        f"    Selected top founder "
+                        f"(ranker_score={top_founder.get('ranker_score', 0):.4f})"
+                    )
+
+                except Exception as e:
+                    print(f"    ⚠️ Ranker failed: {e}")
                     all_founders_df.sort_values(
                         by='past_success_indication_score',
                         ascending=False,
                         inplace=True
                     )
-                    top_founder = all_founders_df.iloc[0].to_dict()
-                    sub['top_founder'] = top_founder
+                    sub['top_founder'] = all_founders_df.iloc[0].to_dict()
+
             else:
-                sub['top_founder'] = None
+                all_founders_df.sort_values(
+                    by='past_success_indication_score',
+                    ascending=False,
+                    inplace=True
+                )
+                sub['top_founder'] = all_founders_df.iloc[0].to_dict()
 
-            top_founders.append(sub.get('top_founder'))
-            
-            # Get relevant deal activity for this subcategory (with same date filter)
-            deal_data = get_relevant_deals(sub['subcategory'], tree, filter_date="2025-10-01")
-            sub['deal_activity'] = deal_data
+            # --------------------------------------------------
+            # Deal activity + interest
+            # --------------------------------------------------
+            sub['deal_activity'] = get_relevant_deals(
+                sub['subcategory'],
+                tree,
+                filter_date="2025-10-01"
+            )
 
-            # Also attach 'interest' metadata from the corresponding subcategory node
             interest_text = ""
             try:
                 nodes = find_nodes_by_name(tree, sub['subcategory'])
                 for node in nodes:
-                    meta = node.get('meta', {}) if isinstance(node, dict) else {}
-                    interest_val = meta.get('interest', '')
-                    if isinstance(interest_val, str) and interest_val.strip():
-                        interest_text = interest_val.strip()
+                    meta = node.get('meta', {})
+                    val = meta.get('interest', '')
+                    if isinstance(val, str) and val.strip():
+                        interest_text = val.strip()
                         break
             except Exception:
-                # If anything fails, leave interest_text as empty
                 pass
+
             sub['interest'] = interest_text
 
     return subcategories, pipeline_dict
@@ -692,10 +692,9 @@ def main():
         return
     
     print("\nGenerating HTML email...")
-    greeting_text = "Happy Friday! Hope everyone is staying warm and cozy as we head into the holiday season ⛄🌟🍷"
-    greeting_text += "There were a ton of deals done this week, highlighted below, and I'm very excited about the early stage companies I've sourced for you. "
-    greeting_text += "I'm always developing my algorithms to make better sourcing recommendations for you all, this week I've found some really interesting companies aligned with what we have in the pipeline."
-    greeting_text += "\n\nWishing you all a great weekend!\n\n - Monty"
+    greeting_text = "Happy Friday everyone! ⛄🌟🍷 Hopefully everyone is looking forward to the holidays and all the good food. I'll hold down the fort on sourcing while you all get a well deserved break."
+    greeting_text += " There were a ton of deals done this week, highlighted below, and I'm very excited about the early stage companies I've sourced for you. "
+    greeting_text += "\n\nWishing you all happy holidays and a great weekend!\n\n - Monty"
     html_output = generate_html(recent_deals, tracking, recs, pipeline_dict, greeting_text, profile_recs=profile_recs)
     
     # Save to file

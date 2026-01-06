@@ -40,13 +40,38 @@ def get_supabase_client():
         return None
 
 
-def upload_deals_to_supabase(deals_df, table_name="all_deals"):
+def normalize_column_name_for_db(col_name, format_type='exact'):
+    """
+    Normalize column name for database compatibility.
+    
+    Args:
+        col_name: Original column name (e.g., "Funding Round")
+        format_type: 'exact' (keep as is), 'underscore' (replace space with _), 'lowercase' (lowercase)
+    
+    Returns:
+        Normalized column name
+    """
+    if format_type == 'exact':
+        return col_name
+    elif format_type == 'underscore':
+        return col_name.replace(' ', '_')
+    elif format_type == 'lowercase':
+        return col_name.lower()
+    elif format_type == 'lowercase_underscore':
+        return col_name.replace(' ', '_').lower()
+    else:
+        return col_name
+
+
+def upload_deals_to_supabase(deals_df, table_name="all_deals", upsert=False, only_new=False):
     """
     Upload deals DataFrame to Supabase.
     
     Args:
         deals_df: pandas DataFrame with deals data
         table_name: Name of the Supabase table ('all_deals' or 'early_deals')
+        upsert: If True, use upsert to update existing records (default: False)
+        only_new: If True, only insert deals that don't already exist in Supabase (default: False)
     
     Returns:
         bool: True if successful, False otherwise
@@ -63,11 +88,13 @@ def upload_deals_to_supabase(deals_df, table_name="all_deals"):
         # Create a copy to avoid modifying the original
         df_copy = deals_df.copy()
         
-        # Map column names from DataFrame format to database format (lowercase with underscores)
+        # Map CSV column names to database column names
+        # Database now uses: lowercase with underscores (no spaces, no capitalization)
+        # CSV has: "Funding Round", "Company", etc. -> Database expects: "funding_round", "company", etc.
         column_mapping = {
             'Company': 'company',
             'Amount': 'amount',
-            'Funding Round': 'funding_round',
+            'Funding Round': 'funding_round',  # Convert space to underscore and lowercase
             'Vertical': 'vertical',
             'Link': 'link',
             'Investors': 'investors',
@@ -77,28 +104,84 @@ def upload_deals_to_supabase(deals_df, table_name="all_deals"):
             'Founders': 'founders'
         }
         
-        # Rename columns to match database schema
+        # Rename columns to match database schema (lowercase with underscores)
         df_copy = df_copy.rename(columns=column_mapping)
         
-        # For early_deals table, check if 'amount' column exists in the database
-        # If not, we'll exclude it from the upload to avoid schema errors
-        expected_columns = ['company', 'amount', 'funding_round', 'vertical', 'link', 
-                          'investors', 'category', 'source', 'date', 'founders']
+        # Expected columns in database (all lowercase with underscores)
+        # Note: 'founders' column only exists in 'early_deals' table, not 'all_deals'
+        base_columns = ['company', 'amount', 'funding_round', 'vertical', 'link', 
+                       'investors', 'category', 'source', 'date']
+        
+        if table_name == "early_deals":
+            expected_columns = base_columns + ['founders']
+        else:
+            expected_columns = base_columns  # all_deals doesn't have founders column
         
         # Ensure all expected columns exist (add missing ones as empty)
         for col in expected_columns:
             if col not in df_copy.columns:
                 df_copy[col] = ""
         
-        # For early_deals table, we'll try without 'amount' first if it causes errors
-        # Select only the columns we need - but be flexible about 'amount'
-        columns_to_upload = expected_columns.copy()
-        if table_name == "early_deals":
-            # Try to include amount, but we'll handle the error if it doesn't exist
-            pass  # Keep all columns for now, error handling will catch it
-        
         # Select only the columns we need
-        df_copy = df_copy[columns_to_upload]
+        df_copy = df_copy[expected_columns]
+        
+        # Normalize dates for comparison (do this before deduplication)
+        df_copy['date'] = df_copy['date'].apply(
+            lambda x: pd.to_datetime(x).strftime('%Y-%m-%d') if pd.notna(x) and x != "" else None
+        )
+        
+        # Deduplicate based on (company, date) before uploading to avoid duplicate key errors
+        # Keep the first occurrence of each (company, date) pair
+        print(f"  Deduplicating deals (removing duplicate company+date pairs)...")
+        original_count = len(df_copy)
+        df_copy = df_copy.drop_duplicates(subset=['company', 'date'], keep='first')
+        deduped_count = len(df_copy)
+        if original_count != deduped_count:
+            print(f"  Removed {original_count - deduped_count} duplicate deals (kept {deduped_count} unique)")
+        
+        # If only_new is True, filter out deals that already exist in Supabase
+        if only_new:
+            print(f"🔍 Checking for existing deals in Supabase table '{table_name}'...")
+            try:
+                # Get all existing deals from Supabase (company and date only for comparison)
+                existing_deals_response = supabase.table(table_name).select('company,date').execute()
+                existing_deals = existing_deals_response.data if existing_deals_response.data else []
+                
+                # Create a set of (company, date) tuples for fast lookup
+                existing_keys = set()
+                for deal in existing_deals:
+                    company = str(deal.get('company', '')).strip().lower() if deal.get('company') else ''
+                    date = str(deal.get('date', '')).strip() if deal.get('date') else ''
+                    if company and date:
+                        existing_keys.add((company, date))
+                
+                print(f"   Found {len(existing_keys)} existing deals in Supabase")
+                
+                # Filter out deals that already exist
+                original_count = len(df_copy)
+                df_copy['_key'] = df_copy.apply(
+                    lambda row: (str(row.get('company', '')).strip().lower() if pd.notna(row.get('company')) else '', 
+                                str(row.get('date', '')).strip() if pd.notna(row.get('date')) else ''),
+                    axis=1
+                )
+                df_copy = df_copy[~df_copy['_key'].isin(existing_keys)]
+                df_copy = df_copy.drop(columns=['_key'])
+                
+                new_count = len(df_copy)
+                skipped_count = original_count - new_count
+                
+                if skipped_count > 0:
+                    print(f"   ⏭️  Skipping {skipped_count} deals that already exist in Supabase")
+                
+                if new_count == 0:
+                    print(f"✅ All deals already exist in Supabase. Nothing to upload.")
+                    return True
+                
+                print(f"   ✨ Found {new_count} new deals to upload")
+                
+            except Exception as e:
+                print(f"   ⚠️  Error checking existing deals: {e}")
+                print(f"   Proceeding with upload anyway...")
         
         # Convert DataFrame to list of dictionaries
         # Replace NaN values with None for JSON serialization
@@ -147,10 +230,26 @@ def upload_deals_to_supabase(deals_df, table_name="all_deals"):
         
         for i in range(0, len(deals_list), batch_size):
             batch = deals_list[i:i + batch_size]
+            
             try:
-                response = supabase.table(table_name).insert(batch).execute()
+                # Use upsert if enabled (updates existing records, inserts new ones)
+                if upsert:
+                    # Determine conflict columns based on table
+                    # Database uses lowercase: company, date
+                    if table_name == "early_deals":
+                        # For early_deals, match on company and date
+                        conflict_cols = ['company', 'date']
+                    else:
+                        # For all_deals, use company and date as well
+                        conflict_cols = ['company', 'date']
+                    
+                    response = supabase.table(table_name).upsert(batch, on_conflict=','.join(conflict_cols)).execute()
+                    print(f"   ✅ Upserted batch {i//batch_size + 1} ({len(batch)} deals)")
+                else:
+                    response = supabase.table(table_name).insert(batch).execute()
+                    print(f"   ✅ Inserted batch {i//batch_size + 1} ({len(batch)} deals)")
+                
                 total_inserted += len(batch)
-                print(f"   ✅ Inserted batch {i//batch_size + 1} ({len(batch)} deals)")
             except Exception as e:
                 error_msg = str(e)
                 # Check if it's a duplicate key error (which is okay)
@@ -165,23 +264,71 @@ def upload_deals_to_supabase(deals_df, table_name="all_deals"):
                             pass  # Skip duplicates
                 # Check if it's a schema error (column doesn't exist)
                 elif "column" in error_msg.lower() and "schema cache" in error_msg.lower():
-                    print(f"   ⚠️  Schema mismatch detected. Trying without problematic columns...")
-                    # Try again without 'amount' column if it's early_deals
-                    if table_name == "early_deals" and "amount" in error_msg.lower():
-                        # Remove 'amount' from all deals in batch
-                        batch_without_amount = []
+                    print(f"   ⚠️  Schema mismatch detected. This usually means:")
+                    print(f"      1. The Supabase schema cache is stale (refresh it in Supabase dashboard)")
+                    print(f"      2. Column name mismatch")
+                    print(f"   Trying without problematic columns...")
+                    
+                    # Extract the problematic column name from the error message
+                    import re
+                    # Pattern to match: "Could not find the 'column_name' column"
+                    column_match = re.search(r"['\"]([\w_]+)['\"]\s+column", error_msg, re.IGNORECASE)
+                    problematic_columns = []
+                    
+                    if column_match:
+                        col_name = column_match.group(1).lower()  # Database uses lowercase
+                        problematic_columns.append(col_name)
+                    
+                    # Also check for common problematic columns for early_deals
+                    if table_name == "early_deals":
+                        # Try removing known problematic columns if they're mentioned
+                        for col in ['amount', 'category']:
+                            if col in error_msg.lower() and col not in problematic_columns:
+                                problematic_columns.append(col)
+                    
+                    # Try again without problematic columns
+                    if problematic_columns:
+                        batch_without_cols = []
                         for deal in batch:
                             deal_copy = deal.copy()
-                            deal_copy.pop('amount', None)
-                            batch_without_amount.append(deal_copy)
+                            for col in problematic_columns:
+                                # Remove the problematic column (already lowercase)
+                                deal_copy.pop(col, None)
+                            batch_without_cols.append(deal_copy)
+                        
                         try:
-                            response = supabase.table(table_name).insert(batch_without_amount).execute()
-                            total_inserted += len(batch_without_amount)
-                            print(f"   ✅ Inserted batch {i//batch_size + 1} without 'amount' column ({len(batch_without_amount)} deals)")
+                            if upsert:
+                                conflict_cols = ['company', 'date']
+                                response = supabase.table(table_name).upsert(batch_without_cols, on_conflict=','.join(conflict_cols)).execute()
+                            else:
+                                response = supabase.table(table_name).insert(batch_without_cols).execute()
+                            total_inserted += len(batch_without_cols)
+                            cols_str = "', '".join(problematic_columns)
+                            print(f"   ✅ Inserted batch {i//batch_size + 1} without '{cols_str}' column(s) ({len(batch_without_cols)} deals)")
+                            print(f"   💡 Tip: Refresh the schema cache in Supabase dashboard (Settings > API > Reload Schema)")
                         except Exception as e2:
-                            print(f"   ❌ Error inserting batch {i//batch_size + 1} even without 'amount': {e2}")
+                            # If it still fails, try to extract more columns or give up
+                            print(f"   ❌ Error inserting batch {i//batch_size + 1} even without problematic columns: {e2}")
+                            # Try with only essential columns
+                            essential_cols = ['company', 'date', 'link', 'source']
+                            batch_essential = []
+                            for deal in batch:
+                                deal_essential = {k: v for k, v in deal.items() if k in essential_cols}
+                                batch_essential.append(deal_essential)
+                            try:
+                                if upsert:
+                                    conflict_cols = ['company', 'date']
+                                    response = supabase.table(table_name).upsert(batch_essential, on_conflict=','.join(conflict_cols)).execute()
+                                else:
+                                    response = supabase.table(table_name).insert(batch_essential).execute()
+                                total_inserted += len(batch_essential)
+                                print(f"   ✅ Inserted batch {i//batch_size + 1} with only essential columns ({len(batch_essential)} deals)")
+                            except Exception as e3:
+                                print(f"   ❌ Failed to insert batch {i//batch_size + 1} even with essential columns: {e3}")
+                                print(f"   💡 To fix: Go to Supabase dashboard > Settings > API > Reload Schema to refresh the cache")
                     else:
-                        print(f"   ❌ Error inserting batch {i//batch_size + 1}: {e}")
+                        print(f"   ❌ Could not identify problematic column from error: {e}")
+                        print(f"   💡 To fix: Go to Supabase dashboard > Settings > API > Reload Schema to refresh the cache")
                 else:
                     print(f"   ❌ Error inserting batch {i//batch_size + 1}: {e}")
         
@@ -222,19 +369,31 @@ def update_founders_in_supabase(deals_df, table_name="early_deals"):
         df_copy = deals_df.copy()
         
         # Convert Founders list to string if it's a list
+        # Handle both capitalized and lowercase column names from CSV
         if 'Founders' in df_copy.columns:
             df_copy['Founders'] = df_copy['Founders'].apply(
                 lambda x: ', '.join(x) if isinstance(x, list) and x else (x if x else '')
             )
+        elif 'founders' in df_copy.columns:
+            df_copy['founders'] = df_copy['founders'].apply(
+                lambda x: ', '.join(x) if isinstance(x, list) and x else (x if x else '')
+            )
         
-        # Map column names from DataFrame format to database format
+        # Map CSV column names to database column names (lowercase)
         column_mapping = {
             'Company': 'company',
             'Date': 'date',
             'Founders': 'founders'
         }
+        # Also handle if already lowercase
+        if 'company' in df_copy.columns:
+            column_mapping['company'] = 'company'
+        if 'date' in df_copy.columns:
+            column_mapping['date'] = 'date'
+        if 'founders' in df_copy.columns:
+            column_mapping['founders'] = 'founders'
         
-        # Rename columns to match database schema
+        # Rename columns to match database schema (lowercase)
         df_copy = df_copy.rename(columns=column_mapping)
         
         # Ensure required columns exist
@@ -246,7 +405,6 @@ def update_founders_in_supabase(deals_df, table_name="early_deals"):
             df_copy['founders'] = ''
         
         # Filter to only deals that have founders
-        # Use .loc to avoid pandas array comparison issues
         mask = df_copy['founders'].notna() & (df_copy['founders'].astype(str) != '')
         deals_with_founders = df_copy.loc[mask].copy()
         
@@ -259,20 +417,39 @@ def update_founders_in_supabase(deals_df, table_name="early_deals"):
         # Update deals one by one (using company and date as identifier)
         updated_count = 0
         column_missing = False
+        not_found_count = 0
+        error_count = 0
         
-        for _, row in deals_with_founders.iterrows():
+        for idx, row in deals_with_founders.iterrows():
             try:
-                # Update the deal using company and date as the identifier
+                company_val = str(row.get('company', ''))
+                date_val = str(row.get('date', ''))
+                founders_val = str(row.get('founders', ''))
+                
+                if not company_val or not date_val:
+                    print(f"   ⚠️  Skipping row {idx}: missing company or date (company='{company_val}', date='{date_val}')")
+                    continue
+                
                 response = supabase.table(table_name)\
-                    .update({'founders': row['founders']})\
-                    .eq('company', str(row['company']))\
-                    .eq('date', str(row['date']))\
+                    .update({'founders': founders_val})\
+                    .eq('company', company_val)\
+                    .eq('date', date_val)\
                     .execute()
                 
-                if response.data:
+                # Check if update was successful (response.data contains updated rows)
+                if response.data and len(response.data) > 0:
                     updated_count += 1
+                    if updated_count <= 3:  # Print first 3 for debugging
+                        print(f"   ✓ Updated {company_val} ({date_val}) with founders: {founders_val[:50]}...")
+                else:
+                    # No rows matched - deal doesn't exist in database
+                    not_found_count += 1
+                    if not_found_count <= 3:  # Print first 3 for debugging
+                        print(f"   ⚠️  No matching record found for {company_val} ({date_val})")
+                
             except Exception as e:
                 error_msg = str(e)
+                error_count += 1
                 # Check if it's a column missing error
                 if "column" in error_msg.lower() and ("founders" in error_msg.lower() or "schema cache" in error_msg.lower()):
                     if not column_missing:
@@ -284,15 +461,22 @@ def update_founders_in_supabase(deals_df, table_name="early_deals"):
                         print(f"   After adding the column, you can re-run this script to update Supabase.\n")
                         column_missing = True
                     # Skip remaining updates
-                    continue
-                # If deal doesn't exist, that's okay - just skip it
-                elif "does not exist" not in error_msg.lower():
-                    print(f"   ⚠️  Error updating {row.get('company', 'Unknown')}: {e}")
+                    break
+                # Print first few errors for debugging
+                if error_count <= 3:
+                    print(f"   ❌ Error updating {company_val}: {e}")
         
+        # Print summary
         if column_missing:
             print(f"⚠️  Could not update any deals - 'founders' column missing from database")
-        elif updated_count > 0:
-            print(f"✅ Successfully updated {updated_count} deals with founders in {table_name} table")
+        else:
+            print(f"\n📊 Update Summary:")
+            print(f"   ✅ Successfully updated: {updated_count} deals")
+            if not_found_count > 0:
+                print(f"   ⚠️  Not found in database: {not_found_count} deals (may need to upload deals first)")
+            if error_count > 0:
+                print(f"   ❌ Errors encountered: {error_count} deals")
+        
         return True
         
     except Exception as e:
@@ -390,25 +574,52 @@ def updated_newsletter_deals(days_back=6):
             deals_df.to_csv(master_file, index=False)
             print(f"Created master deals file with {len(deals_df)} deals")
         
-        # Upload to Supabase
-        upload_deals_to_supabase(deals_df, table_name="all_deals")
-    else:
-        print("No deals found")
-        return None
-    
-    # Update processed emails list
-    if processed_email_ids:
-        os.makedirs('data/deal_data', exist_ok=True)
-        new_processed_df = pd.DataFrame({"Email_ID": processed_email_ids})
+        # Upload to Supabase (upsert to handle duplicates gracefully)
+        upload_deals_to_supabase(deals_df, table_name="all_deals", upsert=True)
         
-        if os.path.exists('data/deal_data/processed_emails.csv'):
-            existing_df = pd.read_csv('data/deal_data/processed_emails.csv')
-            combined_df = pd.concat([existing_df, new_processed_df]).drop_duplicates()
-            combined_df.to_csv('data/deal_data/processed_emails.csv', index=False)
-        else:
-            new_processed_df.to_csv('data/deal_data/processed_emails.csv', index=False)
-
-    return deals_df
+        # Update processed emails list
+        if processed_email_ids:
+            os.makedirs('data/deal_data', exist_ok=True)
+            new_processed_df = pd.DataFrame({"Email_ID": processed_email_ids})
+            
+            if os.path.exists('data/deal_data/processed_emails.csv'):
+                existing_df = pd.read_csv('data/deal_data/processed_emails.csv')
+                combined_df = pd.concat([existing_df, new_processed_df]).drop_duplicates()
+                combined_df.to_csv('data/deal_data/processed_emails.csv', index=False)
+            else:
+                new_processed_df.to_csv('data/deal_data/processed_emails.csv', index=False)
+        
+        return deals_df
+    else:
+        print("No new deals found in emails")
+        # Even if no new deals, sync existing all_deals.csv to Supabase to ensure it's up to date
+        master_file = 'data/deal_data/all_deals.csv'
+        if os.path.exists(master_file):
+            print("Syncing existing all_deals.csv to Supabase...")
+            try:
+                existing_deals_df = pd.read_csv(master_file)
+                if not existing_deals_df.empty:
+                    # Deduplicate before syncing to avoid errors
+                    print(f"  Found {len(existing_deals_df)} deals in CSV")
+                    existing_deals_df = existing_deals_df.drop_duplicates(subset=['Company', 'Date'], keep='first')
+                    print(f"  After deduplication: {len(existing_deals_df)} unique deals")
+                    upload_deals_to_supabase(existing_deals_df, table_name="all_deals", upsert=True)
+                    print("✅ Synced existing deals to Supabase")
+            except Exception as e:
+                print(f"⚠️  Error syncing existing deals: {e}")
+        # Update processed emails list for emails we checked (even if no deals found)
+        if processed_email_ids:
+            os.makedirs('data/deal_data', exist_ok=True)
+            new_processed_df = pd.DataFrame({"Email_ID": processed_email_ids})
+            
+            if os.path.exists('data/deal_data/processed_emails.csv'):
+                existing_df = pd.read_csv('data/deal_data/processed_emails.csv')
+                combined_df = pd.concat([existing_df, new_processed_df]).drop_duplicates()
+                combined_df.to_csv('data/deal_data/processed_emails.csv', index=False)
+            else:
+                new_processed_df.to_csv('data/deal_data/processed_emails.csv', index=False)
+        
+        return None
 
 def find_early_stage_deals(all_deals):
     if all_deals is None:
@@ -522,7 +733,7 @@ def find_early_stage_deals(all_deals):
         
         # Upload new early stage deals to Supabase (without founders - they'll be added later)
         # Note: Founders will be extracted and added by add_deals_to_database()
-        upload_deals_to_supabase(new_deals, table_name="early_deals")
+        upload_deals_to_supabase(new_deals, table_name="early_deals", only_new=True)
     else:
         print("No new early stage deals found.")
     
@@ -722,6 +933,21 @@ def add_deals_to_database(new_deals=None, days_back=7):
                 
                 company_name = deal_dict.get('Company', 'Unknown')
                 link = deal_dict.get('Link', '')
+                existing_founders = deal_dict.get('Founders', '')
+                
+                # Check if founders already exist (skip if they do)
+                has_existing_founders = (
+                    existing_founders and 
+                    pd.notna(existing_founders) and 
+                    str(existing_founders).strip() != '' and
+                    str(existing_founders).strip().lower() not in ['nan', 'none', '[]', '']
+                )
+                
+                if has_existing_founders:
+                    print(f"[{index+1}/{len(deals)}] Skipping {company_name} - already has founders: {existing_founders}")
+                    # Keep existing founders, don't re-process
+                    enriched_deals.append(deal_dict)
+                    continue
                 
                 print(f"[{index+1}/{len(deals)}] Processing {company_name}")
                 
@@ -829,25 +1055,26 @@ def add_deals_to_database(new_deals=None, days_back=7):
                 existing_df.to_csv(early_deals_file, index=False)
                 print(f"\n✅ Updated {updated_count} deals in {early_deals_file} with founder information")
                 
-                # Also update Supabase with founders for the deals we just processed
-                print(f"\n📤 Updating founders in Supabase...")
-                # Filter to only deals that have founders found
-                mask = enriched_df['Founders'].notna() & (enriched_df['Founders'].astype(str) != '')
-                deals_with_founders_df = enriched_df.loc[mask].copy()
-                if not deals_with_founders_df.empty:
-                    # Update early_deals table with founders (using company and date as identifier)
-                    update_founders_in_supabase(deals_with_founders_df, table_name="early_deals")
+                # Upload the entire early_deals.csv to Supabase with all enriched data
+                print(f"\n📤 Uploading entire early_deals.csv to Supabase with all enriched data...")
+                print(f"   Loading {early_deals_file}...")
+                full_deals_df = pd.read_csv(early_deals_file)
+                print(f"   Found {len(full_deals_df)} total deals in CSV")
+                
+                if not full_deals_df.empty:
+                    # Upload only new deals to Supabase (don't sync all)
+                    upload_deals_to_supabase(full_deals_df, table_name="early_deals", only_new=True)
                 else:
-                    print("   No deals with founders to update.")
+                    print("   ⚠️  No deals to upload")
             else:
                 # If early_deals.csv doesn't exist, create it with enriched data
                 os.makedirs('data/deal_data', exist_ok=True)
                 enriched_df.to_csv(early_deals_file, index=False)
                 print(f"\n✅ Created {early_deals_file} with enriched deals")
                 
-                # Upload to Supabase
+                # Upload to Supabase (only new deals)
                 print(f"\n📤 Uploading deals to Supabase...")
-                upload_deals_to_supabase(enriched_df, table_name="early_deals")
+                upload_deals_to_supabase(enriched_df, table_name="early_deals", only_new=True)
         
         return True
     
@@ -936,8 +1163,8 @@ def reprocess_emails(sources=None, days_back=7):
             combined_df.to_csv(master_file, index=False)
             print(f"Updated master deals file with reprocessed deals")
         
-        # Upload reprocessed deals to Supabase
-        upload_deals_to_supabase(deals_df, table_name="all_deals")
+        # Upload reprocessed deals to Supabase (upsert to handle duplicates gracefully)
+        upload_deals_to_supabase(deals_df, table_name="all_deals", upsert=True)
     else:
         print("No deals found during reprocessing.")
     
@@ -1024,9 +1251,8 @@ def process_recent_early_deals(days_back=6):
         if 'Date' in deals_with_new_links.columns:
             deals_with_new_links['Date'] = deals_with_new_links['Date'].dt.strftime('%Y-%m-%d')
         
-        # Update Supabase - try to update existing records first, then insert if needed
-        # We'll use upload_deals_to_supabase which handles duplicates
-        upload_deals_to_supabase(deals_with_new_links, table_name="early_deals")
+        # Update Supabase - only add new deals, don't sync all
+        upload_deals_to_supabase(deals_with_new_links, table_name="early_deals", only_new=True)
     else:
         print("✅ All deals already have links")
     

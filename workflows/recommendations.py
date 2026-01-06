@@ -333,12 +333,12 @@ def mark_prev_recs(names=None, companies=None):
         cur = conn.cursor()
         for table_name in ["founders", "stealth_founders"]:
             query = sql.SQL(
-                "UPDATE {} SET history = 'recommended' WHERE name = ANY(%s) OR company_name = ANY(%s);"
+                "UPDATE {} SET history = 'recommended train' WHERE name = ANY(%s) OR company_name = ANY(%s);"
             ).format(sql.Identifier(table_name))
             cur.execute(query, (list(all_names), list(companies_set)))
             print(f"Updated {cur.rowcount} records in {table_name}.")
         conn.commit()
-        print(f"✅ Successfully marked profiles as 'recommended'.")
+        print(f"✅ Successfully marked profiles as 'recommended train'.")
     except Exception as e:
         print(f"❌ Error updating records: {e}")
         conn.rollback()
@@ -442,7 +442,6 @@ def send_extra_recs(test=True):
         FROM founders
         WHERE founder = true
         AND history = ''
-        AND (tree_result = 'Strong recommend' OR tree_result = 'Recommend')
         """, conn)
         new_profiles = new_profiles.drop_duplicates(subset=['name'])
         new_profiles = new_profiles.reset_index(drop=True)

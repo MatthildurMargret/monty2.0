@@ -929,7 +929,14 @@ def add_blocks_to_page(page_id, row):
         print(f"Failed to add blocks: {response.status_code} - {response.text}")
 
 def calculate_ai_score(row):
+    """
+    Calculate AI score for Notion display.
+    
+    NOTE: past_success_indication_score, startup_experience_score, and company_tech_score
+    are no longer generated. This function uses default value of 0 for missing scores.
+    """
     founder_score = row.get('founder_score', 0)
+    # These scores are no longer generated - use 0 as default
     past_success_indication_score = row.get('past_success_indication_score', 0)
     startup_experience_score = row.get('startup_experience_score', 0)
     company_tech_score = row.get('company_tech_score', 0)

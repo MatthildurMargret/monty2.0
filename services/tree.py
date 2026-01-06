@@ -967,23 +967,34 @@ def _has_thought_already(notes: str, formatted_thought: str) -> bool:
 
 def get_founder_text(row):
     about = row['about'] or "No about information"
-    past_success_indication_score = row['past_success_indication_score'] or "No past success indication score"
-    startup_experience_score = row['startup_experience_score'] or "No startup experience score"
-    repeat_founder = str(row['repeat_founder'])
-    technical = str(row['technical'])
-    industry_expertise_score = row['industry_expertise_score'] or "Unknown"
-    school_tags = row['school_tags'] or "No school tags"
-    company_tags = row['company_tags'] or "No company tags"
-    company_tech_score = row['company_tech_score'] or "No company tech score"
+    # These scores are no longer generated (disabled to save API costs)
+    # Handle missing scores gracefully
+    past_success_indication_score = row.get('past_success_indication_score')
+    startup_experience_score = row.get('startup_experience_score')
+    industry_expertise_score = row.get('industry_expertise_score')
+    company_tech_score = row.get('company_tech_score')
+    
+    repeat_founder = str(row.get('repeat_founder', ''))
+    technical = str(row.get('technical', ''))
+    school_tags = row.get('school_tags') or "No school tags"
+    company_tags = row.get('company_tags') or "No company tags"
 
     repeat_founder = "Yes" in repeat_founder or "true" in repeat_founder
     technical = "Yes" in technical or "true" in technical
 
-    founder_text = f"""About the founder: {about}. 
-    Past Success Indication Score (out of 10): {past_success_indication_score}. 
-    Startup Experience Score (out of 10): {startup_experience_score}. 
-    Industry Expertise Score (out of 10): {industry_expertise_score}. 
-    Company Tech Score (out of 10): {company_tech_score}. 
+    founder_text = f"""About the founder: {about}."""
+    
+    # Only include scores if they exist (for backward compatibility with existing data)
+    if past_success_indication_score is not None:
+        founder_text += f"\n    Past Success Indication Score (out of 10): {past_success_indication_score}."
+    if startup_experience_score is not None:
+        founder_text += f"\n    Startup Experience Score (out of 10): {startup_experience_score}."
+    if industry_expertise_score is not None:
+        founder_text += f"\n    Industry Expertise Score (out of 10): {industry_expertise_score}."
+    if company_tech_score is not None:
+        founder_text += f"\n    Company Tech Score (out of 10): {company_tech_score}."
+    
+    founder_text += f"""
     Background worth noting:
     Schools: {school_tags}. 
     Companies: {company_tags}

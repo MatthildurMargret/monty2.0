@@ -786,7 +786,7 @@ def score_result(result, company, amount=None, round_type=None):
 
     FUNDING_KEYWORDS = [
         "raises", "raised", "funding", "investment", "announces",
-        "secures", "bags", "lands", "closes", "series", "seed", "round"
+        "secures", "bags", "lands", "closes", "series", "seed", "round", "banks"
     ]
     score = 0
     title = result["title"].lower()
