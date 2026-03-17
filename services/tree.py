@@ -1153,6 +1153,8 @@ def test_tree():
 def funding_filter(funding):
     if funding is None:
         return True
+    if not isinstance(funding, str):
+        return True
     if funding == '' or funding == 'NaN' or funding == 'nan':
         return True
     if "Series" in funding and "unknown" not in funding:
