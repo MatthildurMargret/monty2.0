@@ -1,124 +1,119 @@
 # Monty 2.0
 
-Monty is an AI-powered assistant for Montage Ventures, an early-stage VC firm investing across fintech, healthcare, and commerce. Monty helps the team discover founders, analyze deals, track pipeline companies, and generate weekly investment updates.
+Monty is an automated sourcing and recommendation system for Montage Ventures, a seed-stage VC firm. It discovers early-stage founders, filters them through a quality pipeline, and surfaces the best ones via weekly email updates and on-demand recommendation emails.
 
-## Features
+## What it does
 
-- **Slack Bot Integration**: Interactive AI assistant accessible via Slack for real-time queries
-- **Founder Discovery**: Automated discovery and analysis of founders using Aviato search
-- **Deal Processing**: Processes and enriches funding deal data with AI-powered insights
-- **Pipeline Management**: Tracks portfolio and pipeline companies with investment stage classification
-- **Weekly Updates**: Generates automated weekly summaries of deals, recommendations, and market insights
-- **Market Map**: Maintains a hierarchical tree structure of investment sectors, categories, and companies
-- **ML-Powered Recommendations**: Uses XGBoost models for company classification and ranking
-- **Profile Recommendations**: AI-driven recommendations for founder and company profiles
+**Founder sourcing** — Queries the Aviato API daily for LinkedIn profiles matching search criteria, enriches them with company data, and stores them in PostgreSQL.
 
-## Tech Stack
+**Quality filtering** — Before a founder reaches any recommendation, they pass through several gates:
+- Must have "founder" or "co-founder" literally in their current title (CEO-only, founding engineer, EIR etc. are excluded)
+- LLM pedigree check: prior experience at top-tier big tech, a $100M+ funded startup, or a prestigious research lab/university. Internships at these companies count. The same check also flags clear non-startups (consultancies, funds, agencies) — ghost/stealth companies are allowed through
+- Company must not have raised Series A or later
+- Company must have been founded within the last 2 years
+- Profiles that fail are kept in the DB with `pedigree_passes = false` so mistakes can be manually corrected
+
+**Enrichment** — After ingestion, `add_monty_data` runs on new profiles to add: product/market description, funding formatting, repeat founder detection, technical founder detection, company/school tags, and verticals.
+
+**Taste tree classification** — Companies are classified into Montage's investment category hierarchy (stored in `data/taste_tree.json`) via an LLM call. This drives which user sees which recommendation.
+
+**Weekly update email** — Sent to the Montage team with three sections: recent early-stage deals (sourced from newsletter emails), portfolio/pipeline tracking updates, and top new founder profiles ranked by the XGBoost ranker model.
+
+**Recommendation emails** — Per-user emails with founder recommendations matched to each person's assigned taste tree categories.
+
+**Deal processing** — Parses funding newsletters from Gmail (VCNewsBriefing, Fortune TermSheet, Fresh Funding, Crunchbase Daily Digest) into structured deal data.
+
+**Company tracking** — Monitors pipeline companies for updates (funding, hires, product launches) via web scraping.
+
+**Slack bot** — Interactive assistant for ad-hoc founder/deal queries.
+
+## Tech stack
 
 - **Language**: Python 3
-- **ML/AI**: XGBoost, scikit-learn, OpenAI API, Groq API, Google Generative AI
-- **Database**: PostgreSQL (via Supabase)
-- **APIs**: Slack SDK, Google APIs, OpenAI Agents SDK
-- **Data Processing**: pandas, numpy, pyarrow
-- **Web Scraping**: BeautifulSoup4, Playwright
-- **Deployment**: Railway (configured via Procfile)
+- **Database**: PostgreSQL via Supabase
+- **ML**: XGBoost ranker model for scoring and ranking founders
+- **AI**: OpenAI (gpt-4o-mini) for pedigree checks, descriptions, deal synthesis, tree classification; Groq as fallback
+- **APIs**: Aviato (founder/company data), Gmail API (deal emails + sending), Slack SDK, Notion (pipeline tracking), Firecrawl (tracking scraping), Exa/Parallel Search (discovery)
+- **Deployment**: Railway (Procfile), scheduled via `schedule` library
 
-## Setup
+## Environment variables
 
-### Prerequisites
-
-- Python 3.8+
-- PostgreSQL database (or Supabase)
-- API keys for:
-  - Slack (Bot Token & App Token)
-  - OpenAI
-  - Groq
-  - Google APIs
-  - SerpAPI (for web search)
-
-### Installation
-
-1. Clone the repository:
-```bash
-git clone <repository-url>
-cd monty2.0-main
+```
+AVIATO_KEY
+OPENAI_API_KEY
+GROQ_API_KEY
+DATABASE_URL
+SUPABASE_URL
+SUPABASE_KEY
+GOOGLE_CREDENTIALS_BASE64
+GOOGLE_TOKENS_BASE64
+SLACK_BOT_TOKEN
+SLACK_APP_TOKEN
+PARALLEL_API_KEY
+NOTION_API_KEY
+FIRECRAWL_API_KEY
 ```
 
-2. Install dependencies:
+Optional:
+```
+CRON_ONLY=true          # skip Slack bot, run cron jobs only (Railway mode)
+LOG_LEVEL=INFO          # default INFO, set WARNING to reduce noise
+RUN_INITIAL_PROCESSING  # run processing pipeline on startup
+RUN_INITIAL_DISCOVERY   # run discovery pipeline on startup
+TREE_SOURCE=supabase    # load taste tree from Supabase instead of JSON
+```
+
+## Scheduled jobs
+
+- **Daily 6 AM PDT**: `process_profiles_aviato` → `add_monty_data` → `add_tree_analysis`
+- **Daily 10 PM PDT**: `aviato_discover`
+
+## Project structure
+
+```
+main.py                        # Entry point — Slack bot + cron scheduler
+workflows/
+  aviato_processing.py         # Core ingestion: Aviato API → DB, pedigree check, enrichment
+  weekly_update.py             # Weekly email assembly and sending
+  recommendations.py           # Per-user recommendation emails
+  profile_recommendations.py   # Profile fetching and ranking for weekly update
+  deals.py                     # Deal ingestion from Gmail newsletters
+  tracking.py                  # Pipeline company monitoring
+services/
+  database.py                  # PostgreSQL connection and query helpers
+  openai_api.py                # OpenAI wrapper (descriptions, synthesis, scoring)
+  groq_api.py                  # Groq wrapper with OpenAI fallback
+  profile_analysis.py          # Founder detection, technical check, feature extraction
+  tree.py                      # Taste tree loading, classification, funding filter
+  weekly_formatting.py         # HTML email generation
+  google_client.py             # Gmail auth and sending
+  slack_bot.py                 # Slack bot handler
+  notion.py                    # Notion pipeline integration
+  ranker_inference.py          # XGBoost model inference
+  model_loader.py              # Model loading utility
+data/
+  models/                      # Trained XGBoost ranker model
+  taste_tree.json              # Investment category hierarchy
+  deal_data/                   # Processed deal CSVs
+  recommended_profiles.json    # Dedup tracking for sent recommendations
+migrations/                    # DB schema migrations (run manually via psql)
+```
+
+## Running locally
+
 ```bash
 pip install -r requirements.txt
-```
-
-3. Set up environment variables:
-Create a `.env` file in the root directory with the following variables:
-```
-SLACK_BOT_TOKEN=your_slack_bot_token
-SLACK_APP_TOKEN=your_slack_app_token
-OPENAI_API_KEY=your_openai_key
-GROQ_API_KEY=your_groq_key
-DATABASE_URL=your_postgresql_connection_string
-# ... other API keys and configuration
-```
-
-4. Run the application:
-```bash
+cp .env.example .env  # fill in API keys
 python main.py
 ```
 
-## Project Structure
-
-```
-monty2.0-main/
-├── main.py                 # Application entry point
-├── services/               # Core service modules
-│   ├── slack_bot.py       # Slack bot implementation
-│   ├── ai_scoring.py      # AI-powered scoring functions
-│   ├── deal_processing.py # Deal data processing
-│   ├── tree_tools.py      # Market map tree operations
-│   └── ...
-├── workflows/             # Business logic workflows
-│   ├── weekly_update.py  # Weekly update generation
-│   ├── deals.py          # Deal processing workflow
-│   ├── recommendations.py # Recommendation system
-│   └── ...
-├── tests/                 # Test scripts and utilities
-├── data/                  # Data files and models
-│   ├── models/           # Trained ML models
-│   ├── deal_data/        # Deal datasets
-│   └── ...
-└── config/               # Configuration files
+To run just the processing pipeline without the Slack bot:
+```bash
+CRON_ONLY=true python main.py
 ```
 
-## Usage
-
-### Slack Bot
-
-Once running, interact with Monty directly in Slack. Monty can:
-- Search for founders and companies
-- Analyze funding deals and trends
-- Access portfolio and pipeline information
-- Query the market map by sector
-- Generate insights about companies and markets
-
-### Cron Jobs
-
-The application runs scheduled tasks:
-- **Daily at 6 AM PDT**: Aviato profile processing pipeline
-- **Daily at 10 PM PDT**: Founder discovery pipeline
-
-### Workflows
-
-Individual workflows can be run independently:
-- `workflows/weekly_update.py`: Generate weekly investment updates
-- `workflows/deals.py`: Process and enrich deal data
-- `workflows/recommendations.py`: Generate company/founder recommendations
-
-## Configuration
-
-Key environment variables:
-- `CRON_ONLY`: Run only cron jobs without Slack bot
-- `LOG_LEVEL`: Set logging level (INFO, WARNING, ERROR)
-- `RUN_INITIAL_PROCESSING`: Run processing pipeline on startup
-- `RUN_INITIAL_DISCOVERY`: Run discovery pipeline on startup
-
-
+To trigger workflows directly:
+```bash
+python workflows/weekly_update.py
+python workflows/aviato_processing.py
+```
