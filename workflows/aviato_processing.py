@@ -597,9 +597,9 @@ def check_founder_pedigree(profile):
     """
     import anthropic
 
-    anthropic_key = os.getenv("ANTHROPIC_API_KEY")
+    anthropic_key = os.getenv("CLAUDE_API_KEY")
     if not anthropic_key:
-        logger.warning("ANTHROPIC_API_KEY not set — skipping pedigree check")
+        logger.warning("CLAUDE_API_KEY not set — skipping pedigree check")
         return True, "Pedigree check skipped — no API key"
 
     all_experiences = profile.get("all_experiences") or []
