@@ -624,18 +624,21 @@ def check_founder_pedigree(profile):
     experience_text = "\n".join(exp_lines)
     company_text = f"\nCurrent company description: {company_description}" if company_description else ""
 
-    prompt = """You are a strict filter for a seed-stage VC firm evaluating whether a founder has strong enough background to be worth reviewing.
+    prompt = """You are a strict filter for a seed-stage VC firm evaluating founder profiles on two dimensions.
 
-Evaluate the founder's prior work history (NOT their current startup) and return a JSON object with two fields:
+Return a JSON object with two fields:
 - "passes": true or false
 - "reason": one sentence explaining the decision
 
-Criteria for passing (at least ONE must be clearly met):
-1. Worked at a top-tier big tech company: Google/Alphabet, Meta/Facebook, Apple, Amazon, Microsoft, Nvidia, Netflix, Stripe, Uber, Airbnb, Twitter/X, LinkedIn, Salesforce, Snap, Lyft, DoorDash, Coinbase, Robinhood, Palantir, or similar well-known tech giants
-2. Worked at a well-funded startup — the company must be clearly recognizable as having raised substantial funding ($100M+), i.e. a known unicorn or high-profile startup
-3. Conducted genuine academic or industry research at a prestigious institution: MIT, Stanford, CMU, Caltech, Harvard, Oxford, Cambridge, ETH Zurich — or at a leading AI/tech research lab such as DeepMind, OpenAI, Anthropic, Google Brain, Microsoft Research, Meta AI Research, Bell Labs
+A profile passes only if BOTH conditions are met:
 
-Be strict. "Employee #12 at a startup" does not pass. A generic software role at an unknown company does not pass. Only clearly recognizable high-caliber employers or research roles qualify.
+CONDITION 1 — PEDIGREE (at least ONE must be clearly met):
+1. Worked at a top-tier big tech company: Google/Alphabet, Meta/Facebook, Apple, Amazon, Microsoft, Nvidia, Netflix, Stripe, Uber, Airbnb, Twitter/X, LinkedIn, Salesforce, Snap, Lyft, DoorDash, Coinbase, Robinhood, Palantir, or similar well-known tech giants. Internships at these companies count.
+2. Worked at a well-funded startup clearly recognizable as having raised $100M+, i.e. a known unicorn or high-profile startup
+3. Conducted genuine research at a prestigious institution: MIT, Stanford, CMU, Caltech, Harvard, Oxford, Cambridge, ETH Zurich — or at a leading AI/tech research lab such as DeepMind, OpenAI, Anthropic, Google Brain, Microsoft Research, Meta AI Research, Bell Labs
+
+CONDITION 2 — COMPANY TYPE:
+The current company must appear to be a genuine technology startup. Fail this condition only if there is clear evidence it is a consultancy, advisory firm, investment fund, holding company, or agency. If the company has no description (stealth/early stage), assume it is a startup and pass this condition.
 
 Respond with only the JSON object, no other text."""
 

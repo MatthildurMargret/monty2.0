@@ -1011,6 +1011,11 @@ def _fetch_and_filter_founders():
         WHERE founder = true
         AND history = ''
         AND (pedigree_passes IS DISTINCT FROM false)
+        AND (latestdealtype IS NULL OR latestdealtype NOT ILIKE 'Series%')
+        AND (
+            building_since IS NULL OR building_since = ''
+            OR (building_since ~ '^\d{4}' AND SUBSTRING(building_since FROM 1 FOR 4)::integer >= DATE_PART('year', CURRENT_DATE) - 2)
+        )
         """, conn)
         new_profiles = new_profiles.drop_duplicates(subset=['name'])
         new_profiles = new_profiles.reset_index(drop=True)

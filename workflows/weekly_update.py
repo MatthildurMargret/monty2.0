@@ -322,6 +322,11 @@ def get_founders_by_category_path(path, conn=None):
             AND history = ''
             AND tree_path LIKE %s
             AND (pedigree_passes IS DISTINCT FROM false)
+            AND (latestdealtype IS NULL OR latestdealtype NOT ILIKE 'Series%%')
+            AND (
+                building_since IS NULL OR building_since = ''
+                OR (building_since ~ '^\d{4}' AND SUBSTRING(building_since FROM 1 FOR 4)::integer >= DATE_PART('year', CURRENT_DATE) - 2)
+            )
             """,
             ("%" + path + "%",)
         )
