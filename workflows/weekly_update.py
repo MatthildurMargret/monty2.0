@@ -7,10 +7,12 @@ from services.tree_tools import find_pipeline_companies, find_nodes_by_name
 from services.database import get_db_connection
 import pandas as pd
 from datetime import datetime, timedelta
-from workflows.recommendations import mark_prev_recs
+from workflows.recommendations import mark_prev_recs, is_company_less_than_2_years_old
 from services.path_mapper import get_all_matching_old_paths
 from workflows.profile_recommendations import get_profile_recommendations, mark_profiles_as_recommended, format_profiles_for_weekly_update
 from services.deal_processing import normalize_company_name
+from services.model_loader import load_ranker_model
+from services.ranker_inference import rank_profiles
 
 
 # Add tests directory to path to import model inference
@@ -41,10 +43,24 @@ def get_recent_deals():
     
     # Filter by date first (past week) - more efficient to filter early
     current_date = datetime.now().strftime("%B %d, %Y")  # e.g., "November 16, 2024"
-    past_week = datetime.now() - timedelta(days=6)
+    past_week = datetime.now() - timedelta(days=7)
     deals["Date"] = pd.to_datetime(deals["Date"], errors="coerce")
     initial_count = len(deals)
-    deals = deals[deals["Date"] > past_week].copy()
+    
+    # Check for invalid dates
+    invalid_dates = deals["Date"].isna().sum()
+    if invalid_dates > 0:
+        print(f"  ⚠️  Warning: {invalid_dates} deals have invalid/missing dates (will be excluded)")
+    
+    # Debug: Show date range in the file
+    valid_dates = deals[~deals["Date"].isna()]
+    if not valid_dates.empty:
+        print(f"  📅 Date range in file: {valid_dates['Date'].min()} to {valid_dates['Date'].max()}")
+        print(f"  📅 Past week cutoff: {past_week}")
+        print(f"  📅 Deals with valid dates: {len(valid_dates)}")
+    
+    # Use >= to include deals from exactly 7 days ago
+    deals = deals[deals["Date"] >= past_week].copy()
     after_date_count = len(deals)
     
     # Filter out Series A companies
@@ -78,9 +94,49 @@ def get_recent_deals():
     
     return deals
 
+def _filter_tracking_updates(df, days=5):
+    """Filter a tracking DataFrame to only include recent updates.
+
+    Filters rows that have a non-empty most_recent_update and whose date
+    (last_checked, update_date, or most_recent_update_date) falls within the
+    last `days` days. Deduplicates by company_name at the end.
+
+    Args:
+        df: Full tracking DataFrame.
+        days: Look-back window in days (default 5).
+
+    Returns:
+        Filtered and deduplicated DataFrame.
+    """
+    last_update = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+    new_updates = df[df['most_recent_update'].notna() & (df['most_recent_update'] != '')]
+
+    if 'last_checked' in new_updates.columns:
+        new_updates = new_updates.copy()
+        new_updates['last_checked'] = pd.to_datetime(new_updates['last_checked'], errors='coerce')
+        new_updates = new_updates[new_updates['last_checked'] >= pd.Timestamp(last_update)]
+    elif 'update_date' in new_updates.columns:
+        new_updates = new_updates.copy()
+        new_updates['update_date'] = pd.to_datetime(new_updates['update_date'], errors='coerce')
+        new_updates = new_updates[new_updates['update_date'] >= pd.Timestamp(last_update)]
+    elif 'most_recent_update_date' in new_updates.columns:
+        new_updates = new_updates.copy()
+        new_updates['most_recent_update_date'] = pd.to_datetime(new_updates['most_recent_update_date'], errors='coerce')
+        new_updates = new_updates[new_updates['most_recent_update_date'] >= pd.Timestamp(last_update)]
+    else:
+        # No date column available: return empty rather than show stale data
+        new_updates = new_updates.iloc[0:0]
+
+    return new_updates.drop_duplicates(subset='company_name', keep='first')
+
+
 def get_tracking():
     """Get tracking updates from Supabase (with CSV fallback).
-    
+
+    Only returns updates from the last 5 days, filtered by last_checked
+    (when we last checked the company) or update_date (when the update was found).
+    This ensures the weekly update only displays recent tracking items.
+
     Returns:
         pandas.DataFrame: DataFrame with tracking updates from the last 5 days
     """
@@ -90,69 +146,36 @@ def get_tracking():
     except ImportError:
         print("⚠️  Could not import tracking functions, falling back to CSV")
         load_tracking_from_supabase = None
-    
+
     # Try Supabase first
     if load_tracking_from_supabase:
         try:
             df = load_tracking_from_supabase()
             if not df.empty:
-                # Filter for updates from last 5 days
-                last_update = (datetime.now() - timedelta(days=5)).strftime("%Y-%m-%d")
-                
-                # Filter for companies with updates
-                new_updates = df[df['most_recent_update'].notna() & (df['most_recent_update'] != '')]
-                
-                if 'last_checked' in new_updates.columns:
-                    # Filter by last_checked date
-                    new_updates['last_checked'] = pd.to_datetime(new_updates['last_checked'], errors='coerce')
-                    new_updates = new_updates[new_updates['last_checked'] >= pd.Timestamp(last_update)]
-                elif 'update_date' in new_updates.columns:
-                    # Fallback to update_date
-                    new_updates['update_date'] = pd.to_datetime(new_updates['update_date'], errors='coerce')
-                    new_updates = new_updates[new_updates['update_date'] >= pd.Timestamp(last_update)]
-                
-                # Remove duplicates
-                new_updates = new_updates.drop_duplicates(subset='company_name', keep='first')
-                
-                return new_updates
+                return _filter_tracking_updates(df)
         except Exception as e:
             print(f"⚠️  Error loading from Supabase: {e}, falling back to CSV")
-    
+
     # Fallback to CSV
     tracking_file = 'data/tracking/tracking_db.csv'
-    
+
     if not os.path.exists(tracking_file):
         print(f"⚠️  Tracking file not found at {tracking_file}, returning empty DataFrame")
         return pd.DataFrame()
-    
+
     try:
         df = pd.read_csv(tracking_file)
     except Exception as e:
         print(f"⚠️  Error reading tracking file: {e}, returning empty DataFrame")
         return pd.DataFrame()
-    
+
     if df.empty:
         return pd.DataFrame()
-    
-    new_updates = df[df['most_recent_update'].notna() & (df['most_recent_update'] != '')]
-    df.drop_duplicates(subset='company_name', keep='first', inplace=True)
 
-    last_update = (datetime.now() - timedelta(days=5)).strftime("%Y-%m-%d")
-
-    if 'last_checked' in new_updates.columns:
-        # Try using last_checked instead if available
-        new_updates['last_checked'] = pd.to_datetime(new_updates['last_checked'], errors='coerce')
-        new_updates = new_updates[new_updates['last_checked'] >= pd.Timestamp(last_update)]
-    elif 'most_recent_update_date' in new_updates.columns:
-        # Convert to datetime if it exists
-        new_updates['most_recent_update_date'] = pd.to_datetime(new_updates['most_recent_update_date'], errors='coerce')
-        # Filter by date if the column exists
-        new_updates = new_updates[new_updates['most_recent_update_date'] >= pd.Timestamp(last_update)]
-
-    return new_updates
+    return _filter_tracking_updates(df)
 
 # Load the investment tree root node
-def get_pipeline_stats(filter_date="2025-09-10"):
+def get_pipeline_stats(filter_date=None):
     """
     Analyze pipeline companies and return structured statistics.
     
@@ -167,6 +190,9 @@ def get_pipeline_stats(filter_date="2025-09-10"):
             'top_paths': [{'path': str, 'count': int}, ...]
         }
     """
+    if filter_date is None:
+        filter_date = (datetime.now() - timedelta(days=180)).strftime("%Y-%m-%d")
+
     with open('data/taste_tree.json', 'r') as f:
         tree = json.load(f)
 
@@ -265,50 +291,78 @@ def find_relevant_information(pipeline_dict):
     
     return filtered_subcategories
 
-def get_founders_by_category_path(path):
+def get_founders_by_category_path(path, conn=None):
     """
     Query all founders matching a category path from the database.
-    
+
     Args:
         path: Category path to search for (e.g., "Payments" or "Fintech > Payments")
-    
+        conn: Optional existing database connection. If provided it is used as-is
+              and will NOT be closed by this function. If None, a new connection
+              is opened and closed before returning.
+
     Returns:
         pandas.DataFrame: DataFrame with all matching founders, or empty DataFrame if none found
     """
-    conn = get_db_connection()
-    if not conn:
-        print(f"  ⚠️  Failed to connect to database for path: {path}")
-        return pd.DataFrame()
-    
+    _managed = conn is None
+    if _managed:
+        conn = get_db_connection()
+        if not conn:
+            print(f"  ⚠️  Failed to connect to database for path: {path}")
+            return pd.DataFrame()
+
+    cursor = None
     try:
         cursor = conn.cursor()
         # Query all founders matching the path (no hardcoded quality filters)
         cursor.execute(
             """
-            SELECT * FROM founders 
-            WHERE founder = true 
-            AND history = '' 
+            SELECT * FROM founders
+            WHERE founder = true
+            AND history = ''
             AND tree_path LIKE %s
-            """, 
+            AND (pedigree_passes IS DISTINCT FROM false)
+            """,
             ("%" + path + "%",)
         )
         rows = cursor.fetchall()
         column_names = [desc[0] for desc in cursor.description]
-        
-        # Convert to DataFrame
+
         if rows:
-            founders_df = pd.DataFrame([dict(zip(column_names, row)) for row in rows])
-            return founders_df
-        else:
-            return pd.DataFrame()
-            
+            return pd.DataFrame([dict(zip(column_names, row)) for row in rows])
+        return pd.DataFrame()
+
     except Exception as e:
         print(f"  ⚠️  Error querying founders for path {path}: {e}")
+        if not _managed:
+            # Shared connection died — retry with a fresh one
+            try:
+                fresh_conn = get_db_connection()
+                if fresh_conn:
+                    fresh_cursor = fresh_conn.cursor()
+                    fresh_cursor.execute(
+                        """
+                        SELECT * FROM founders
+                        WHERE founder = true
+                        AND history = ''
+                        AND tree_path LIKE %s
+                        AND (pedigree_passes IS DISTINCT FROM false)
+                        """,
+                        ("%" + path + "%",)
+                    )
+                    rows = fresh_cursor.fetchall()
+                    column_names = [desc[0] for desc in fresh_cursor.description]
+                    fresh_cursor.close()
+                    fresh_conn.close()
+                    if rows:
+                        return pd.DataFrame([dict(zip(column_names, row)) for row in rows])
+            except Exception as retry_err:
+                print(f"  ⚠️  Retry also failed for path {path}: {retry_err}")
         return pd.DataFrame()
     finally:
         if cursor:
             cursor.close()
-        if conn:
+        if _managed and conn:
             conn.close()
 
 def get_relevant_deals(subcategory, tree, filter_date=None):
@@ -404,6 +458,43 @@ def get_relevant_deals(subcategory, tree, filter_date=None):
         'filtered_node_count': len(filtered_nodes)
     }
 
+def get_all_recent_deals():
+    """Load all deals (not just early stage) from the past week."""
+    deals_file = 'data/deal_data/all_deals.csv'
+    if not os.path.exists(deals_file):
+        return pd.DataFrame()
+    try:
+        deals = pd.read_csv(deals_file, quotechar='"')
+    except Exception as e:
+        print(f"⚠️  Error reading all_deals file: {e}")
+        return pd.DataFrame()
+    if deals.empty:
+        return pd.DataFrame()
+    deals["Date"] = pd.to_datetime(deals["Date"], errors="coerce")
+    past_week = datetime.now() - timedelta(days=7)
+    deals = deals[deals["Date"] >= past_week].copy()
+    deals["Investors"] = deals["Investors"].fillna("").astype(str)
+    deals["Category"] = deals["Category"].fillna("Other")
+    deals["Vertical"] = deals["Vertical"].fillna("")
+    return deals
+
+
+def fetch_pipeline_companies():
+    """Fetch pipeline companies from Notion filtered by active priorities."""
+    ACTIVE_PRIORITIES = {"qualifying", "medium", "high", "low", "track"}
+    try:
+        from services.notion import import_pipeline
+        PIPELINE_ID = "15e30f29-5556-4fe1-89f6-76d477a79bf8"
+        df = import_pipeline(PIPELINE_ID)
+        if df.empty:
+            return pd.DataFrame()
+        df = df[df["priority"].str.lower().isin(ACTIVE_PRIORITIES)].copy()
+        return df
+    except Exception as e:
+        print(f"⚠️  Could not fetch Notion pipeline: {e}")
+        return pd.DataFrame()
+
+
 def get_recs():
     with open('data/taste_tree.json', 'r') as f:
         tree = json.load(f)
@@ -412,208 +503,131 @@ def get_recs():
     subcategories = find_relevant_information(pipeline_dict)
 
     # --------------------------------------------------
-    # Load ranker model
+    # Load ranker model (shared loader)
     # --------------------------------------------------
-    try:
-        import xgboost as xgb
-    except ImportError:
-        xgb = None
+    ranker_inference = load_ranker_model()
 
-    model_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data', 'models')
-    print(f"\nLoading ranker-only model from {model_dir}...")
-    ranker_inference = None
-
-    if xgb is None:
-        print("❌ xgboost not available, will fall back to past_success_indication_score sorting")
-    else:
+    # Pre-load prepare_test_features so we don't re-import per subcategory
+    prepare_test_features = None
+    if ranker_inference is not None:
         try:
-            ranker_path = os.path.join(model_dir, 'ranker_only_xgb.json')
-            ranker_metadata_path = os.path.join(model_dir, 'ranker_only_feature_metadata.json')
-            ranker_model_metadata_path = os.path.join(model_dir, 'ranker_only_metadata.json')
-
-            if not os.path.exists(ranker_path):
-                print(f"❌ Ranker-only model not found at {ranker_path}")
-            else:
-                with open(ranker_metadata_path, 'r') as f:
-                    ranker_metadata = json.load(f)
-                with open(ranker_model_metadata_path, 'r') as f:
-                    ranker_model_metadata = json.load(f)
-
-                ranker = xgb.XGBRanker()
-                ranker.load_model(ranker_path)
-
-                norm = ranker_model_metadata.get('ranker_normalization', {})
-                ranker_inference = {
-                    'ranker': ranker,
-                    'metadata': ranker_metadata,
-                    'ranker_min': norm.get('min'),
-                    'ranker_max': norm.get('max')
-                }
-
-                print("✅ Ranker-only model loaded successfully")
-                print(f"  Ranker normalization: min={norm.get('min')}, max={norm.get('max')}")
-
-        except Exception as e:
-            print(f"❌ Error loading ranker-only model: {e}")
+            from test_models import prepare_test_features
+        except ImportError:
+            print("⚠️  Could not import prepare_test_features from test_models")
             ranker_inference = None
 
     # --------------------------------------------------
-    # Iterate categories / subcategories
+    # Open a single shared DB connection for all category queries
     # --------------------------------------------------
-    for category, subs in subcategories.items():
-        print(f"Category: {category}")
+    db_conn = get_db_connection()
+    if not db_conn:
+        print("⚠️  Failed to open shared DB connection; will fall back to per-path connections")
 
-        for sub in subs:
-            print(f"  Subcategory: {sub['subcategory']} ({sub['count']} companies)")
+    try:
+        # --------------------------------------------------
+        # Iterate categories / subcategories
+        # --------------------------------------------------
+        for category, subs in subcategories.items():
+            print(f"Category: {category}")
 
-            # Map taxonomy
-            new_path = sub['subcategory']
-            old_paths = get_all_matching_old_paths(new_path)
-            mapped_paths = old_paths if old_paths else [new_path]
+            for sub in subs:
+                print(f"  Subcategory: {sub['subcategory']} ({sub['count']} companies)")
 
-            # Load founders
-            founders_list = []
-            for path in mapped_paths:
-                df = get_founders_by_category_path(path)
-                if not df.empty:
-                    founders_list.append(df)
+                # Map taxonomy
+                new_path = sub['subcategory']
+                old_paths = get_all_matching_old_paths(new_path)
+                mapped_paths = old_paths if old_paths else [new_path]
 
-            if not founders_list:
-                sub['top_founder'] = None
-                continue
+                # Load founders (reuse shared connection)
+                founders_list = []
+                for path in mapped_paths:
+                    df = get_founders_by_category_path(path, conn=db_conn)
+                    if not df.empty:
+                        founders_list.append(df)
 
-            with warnings.catch_warnings():
-                warnings.filterwarnings('ignore', category=FutureWarning)
-                all_founders_df = pd.concat(founders_list, ignore_index=True)
+                if not founders_list:
+                    sub['top_founder'] = None
+                    continue
 
-            all_founders_df = (
-                all_founders_df
-                .drop_duplicates(subset=['name', 'company_name'])
-                .reset_index(drop=True)
-            )
+                with warnings.catch_warnings():
+                    warnings.filterwarnings('ignore', category=FutureWarning)
+                    all_founders_df = pd.concat(founders_list, ignore_index=True)
 
-            print(f"    Found {len(all_founders_df)} founders")
+                all_founders_df = (
+                    all_founders_df
+                    .drop_duplicates(subset=['name', 'company_name'])
+                    .reset_index(drop=True)
+                )
 
-            # --------------------------------------------------
-            # Rank with model (or fallback)
-            # --------------------------------------------------
-            if ranker_inference is not None:
-                try:
-                    from test_models import prepare_test_features
+                # Filter out companies older than 3 years (same logic as recommendations.py)
+                if 'building_since' in all_founders_df.columns:
+                    before = len(all_founders_df)
+                    all_founders_df = all_founders_df[
+                        all_founders_df['building_since'].apply(
+                            lambda x: is_company_less_than_2_years_old(x, max_years=3)
+                        )
+                    ].reset_index(drop=True)
+                    filtered_count = before - len(all_founders_df)
+                    if filtered_count > 0:
+                        print(f"    Filtered out {filtered_count} companies older than 3 years (remaining: {len(all_founders_df)})")
+                else:
+                    print("    ⚠️  'building_since' column not found, skipping age filter")
 
-                    founders_with_features = prepare_test_features(
-                        all_founders_df.copy(),
-                        verbose=False
-                    )
+                if all_founders_df.empty:
+                    sub['top_founder'] = None
+                    continue
 
-                    # --- Build feature matrix ---
-                    X_all = []
-                    valid_indices = []
+                print(f"    Found {len(all_founders_df)} founders")
 
-                    def flatten_embedding(emb):
-                        if emb is None or (isinstance(emb, float) and np.isnan(emb)):
-                            return np.zeros(1536, dtype=np.float32)
-                        arr = np.asarray(emb, dtype=np.float32)
-                        return arr.flatten()[:1536]
-
-                    metadata = ranker_inference['metadata']
-
-                    for idx, row in founders_with_features.iterrows():
-                        try:
-                            vec = []
-
-                            vec.extend(flatten_embedding(row.get('text_embedding_group1')))
-                            vec.extend(flatten_embedding(row.get('text_embedding_group2')))
-                            vec.extend(flatten_embedding(row.get('experience_embedding')))
-
-                            for f in metadata['numeric_features']:
-                                v = row.get(f, 0.0)
-                                vec.append(float(0.0 if pd.isna(v) else v))
-
-                            for f in metadata['boolean_features']:
-                                v = row.get(f, 0)
-                                vec.append(int(0 if pd.isna(v) else v))
-
-                            X_all.append(vec)
-                            valid_indices.append(idx)
-
-                        except Exception:
-                            continue
-
-                    if not X_all:
-                        raise RuntimeError("No valid feature rows for ranking")
-
-                    X_all = np.asarray(X_all, dtype=np.float32)
-
-                    # --- Predict ---
-                    raw_scores = ranker_inference['ranker'].predict(X_all)
-
-                    # --- Normalize ---
-                    rmin = ranker_inference['ranker_min']
-                    rmax = ranker_inference['ranker_max']
-
-                    if rmin is not None and rmax is not None and rmax > rmin:
-                        scores = (raw_scores - rmin) / (rmax - rmin)
-                        scores = np.clip(scores, 0.0, 1.0)
+                # --------------------------------------------------
+                # Rank with model (or fallback)
+                # --------------------------------------------------
+                if ranker_inference is not None:
+                    ranked = rank_profiles(all_founders_df, ranker_inference, prepare_test_features)
+                    if 'ranker_score' in ranked.columns:
+                        top_founder = ranked.iloc[0].to_dict()
+                        sub['top_founder'] = top_founder
+                        print(
+                            f"    Selected top founder "
+                            f"(ranker_score={top_founder.get('ranker_score', 0):.4f})"
+                        )
                     else:
-                        scores = 1.0 / (1.0 + np.exp(-raw_scores))
-
-                    founders_with_features['ranker_score'] = 0.0
-                    founders_with_features.loc[valid_indices, 'ranker_score'] = scores
-
-                    founders_with_features.sort_values(
-                        by='ranker_score',
-                        ascending=False,
-                        inplace=True
-                    )
-
-                    top_founder = founders_with_features.iloc[0].to_dict()
-                    sub['top_founder'] = top_founder
-
-                    print(
-                        f"    Selected top founder "
-                        f"(ranker_score={top_founder.get('ranker_score', 0):.4f})"
-                    )
-
-                except Exception as e:
-                    print(f"    ⚠️ Ranker failed: {e}")
+                        all_founders_df.sort_values(
+                            by='past_success_indication_score', ascending=False, inplace=True
+                        )
+                        sub['top_founder'] = all_founders_df.iloc[0].to_dict()
+                else:
                     all_founders_df.sort_values(
-                        by='past_success_indication_score',
-                        ascending=False,
-                        inplace=True
+                        by='past_success_indication_score', ascending=False, inplace=True
                     )
                     sub['top_founder'] = all_founders_df.iloc[0].to_dict()
 
-            else:
-                all_founders_df.sort_values(
-                    by='past_success_indication_score',
-                    ascending=False,
-                    inplace=True
+                # --------------------------------------------------
+                # Deal activity + interest
+                # --------------------------------------------------
+                sub['deal_activity'] = get_relevant_deals(
+                    sub['subcategory'],
+                    tree,
+                    filter_date=(datetime.now() - timedelta(days=180)).strftime("%Y-%m-%d")
                 )
-                sub['top_founder'] = all_founders_df.iloc[0].to_dict()
 
-            # --------------------------------------------------
-            # Deal activity + interest
-            # --------------------------------------------------
-            sub['deal_activity'] = get_relevant_deals(
-                sub['subcategory'],
-                tree,
-                filter_date="2025-10-01"
-            )
+                interest_text = ""
+                try:
+                    nodes = find_nodes_by_name(tree, sub['subcategory'])
+                    for node in nodes:
+                        meta = node.get('meta', {})
+                        val = meta.get('interest', '')
+                        if isinstance(val, str) and val.strip():
+                            interest_text = val.strip()
+                            break
+                except Exception:
+                    pass
 
-            interest_text = ""
-            try:
-                nodes = find_nodes_by_name(tree, sub['subcategory'])
-                for node in nodes:
-                    meta = node.get('meta', {})
-                    val = meta.get('interest', '')
-                    if isinstance(val, str) and val.strip():
-                        interest_text = val.strip()
-                        break
-            except Exception:
-                pass
+                sub['interest'] = interest_text
 
-            sub['interest'] = interest_text
+    finally:
+        if db_conn:
+            db_conn.close()
 
     return subcategories, pipeline_dict
 
@@ -654,10 +668,39 @@ def get_profile_recs():
         tuple: (profiles_list, profile_ids_to_mark)
     """
     try:
+        from workflows.aviato_processing import map_aviato_to_schema
+        from services.openai_api import generate_talent_description
+        
         profiles = get_profile_recommendations(limit=3)
         
         if not profiles:
             return [], []
+        
+        # Generate personalized descriptions for each profile
+        for profile in profiles:
+            try:
+                # Map enriched profile to get all_experiences
+                mapped_profile = map_aviato_to_schema(profile)
+                all_experiences = mapped_profile.get("all_experiences", [])
+                
+                # Get person's name for context
+                person_name = profile.get("fullName") or mapped_profile.get("name", "this person")
+                
+                # Generate personalized description if we have experiences
+                if all_experiences and len(all_experiences) > 0:
+                    personalized_desc = generate_talent_description(
+                        all_experiences=all_experiences,
+                        person_name=person_name
+                    )
+                    if personalized_desc:
+                        profile["personalized_description"] = personalized_desc
+                    else:
+                        profile["personalized_description"] = None
+                else:
+                    profile["personalized_description"] = None
+            except Exception as e:
+                print(f"Warning: could not generate personalized description for profile: {e}")
+                profile["personalized_description"] = None
         
         profile_ids = [p['id'] for p in profiles]
         
@@ -665,6 +708,48 @@ def get_profile_recs():
     except Exception as e:
         print(f"Warning: could not get profile recommendations: {e}")
         return [], []
+
+def generate_greeting_with_openai(fallback=None):
+    """
+    Call OpenAI to generate a brief Friday greeting. No newsletter context needed:
+    just happy Friday / weekend vibes, a quick mention of what's in the issue, and something funny.
+    Returns fallback text if the API call fails.
+    """
+    if fallback is None:
+        fallback = (
+            "Happy Friday everyone! This week you've got an overview of deals, tracking news, "
+            "sourcing results, and some talent recommendations—plus one joke that may or may not land. "
+            "Have a great weekend!\n\n - Monty"
+        )
+    try:
+        from services.openai_api import ask_monty
+    except ImportError:
+        return fallback
+
+    prompt = (
+        "You write the opening greeting for a weekly Friday newsletter from Monty (Montage Ventures). "
+        "Do NOT reference any specific companies, deals, or categories—keep it generic. "
+        "Mention that the newsletter includes: an overview of deals, tracking news, talent recommendations, "
+        "and sourcing results. Add something light and funny (a short joke, pun, or playful line). "
+        "IMPORTANT: Vary the humor each time—come up with something fresh and creative. "
+        "Avoid overused jokes (e.g. the mosquito one, 'TGIF', 'case of the Mondays'). "
+        "Keep it to 3-5 short sentences. End with a weekend sign-off and ' - Monty'. "
+        "Output only the greeting, no preamble or quotes."
+    )
+    # Vary the data slightly each run so the model gets different context (helps avoid repeating the same joke)
+    data = (
+        f"Sections in this newsletter: deals overview, tracking news, talent recommendations, sourcing results. "
+        f"Write a friendly Friday intro."
+        f"(Generated: {datetime.now().strftime('%A %B %d')})"
+    )
+    try:
+        greeting = ask_monty(prompt, data, max_tokens=250)
+        if greeting and greeting.strip():
+            return greeting.strip()
+    except Exception as e:
+        print(f"  ⚠️  OpenAI greeting generation failed: {e}, using fallback")
+    return fallback
+
 
 # Load the tree for deal lookups
 def main():
@@ -674,6 +759,14 @@ def main():
     print("Gathering recent deals...")
     recent_deals = get_recent_deals()
     print(f"Found {len(recent_deals)} recent deals")
+
+    print("\nLoading all recent deals for pipeline crossref + investor activity...")
+    all_recent_deals = get_all_recent_deals()
+    print(f"Found {len(all_recent_deals)} total deals this week")
+
+    print("\nFetching Notion pipeline companies...")
+    pipeline_companies = fetch_pipeline_companies()
+    print(f"Found {len(pipeline_companies)} active pipeline companies")
     
     print("\nGathering tracking updates...")
     tracking = get_tracking()
@@ -689,13 +782,18 @@ def main():
         print(f"Found {len(profile_ids)} tracking profile recommendations")
     else:
         print("No new tracking profile recommendations available")
-        return
+        profile_recs = []
     
+    print("\nGenerating greeting (OpenAI)...")
+    default_greeting = (
+        "Happy Friday everyone! This week you've got an overview of deals, tracking news, "
+        "sourcing results, and some talent recommendations—plus one joke that may or may not land. But you're super excited about the sourcing results this week! "
+        "Have a great weekend!\n\n - Monty"
+    )
+    greeting_text = generate_greeting_with_openai(fallback=default_greeting)
     print("\nGenerating HTML email...")
-    greeting_text = "Happy Friday everyone! ⛄🌟🍷 Hopefully everyone is looking forward to the holidays and all the good food. I'll hold down the fort on sourcing while you all get a well deserved break."
-    greeting_text += " There were a ton of deals done this week, highlighted below, and I'm very excited about the early stage companies I've sourced for you. "
-    greeting_text += "\n\nWishing you all happy holidays and a great weekend!\n\n - Monty"
-    html_output = generate_html(recent_deals, tracking, recs, pipeline_dict, greeting_text, profile_recs=profile_recs)
+    html_output = generate_html(recent_deals, tracking, recs, pipeline_dict, greeting_text, profile_recs=profile_recs,
+                               all_deals_df=all_recent_deals, pipeline_companies_df=pipeline_companies)
     
     # Save to file
     output_path = 'data/weekly_update_output.html'

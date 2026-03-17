@@ -502,9 +502,12 @@ def check_if_founder(row, check_json=True):
     """
     Determine if someone is a current founder and return the index of the
     most relevant experience.
-    
+
+    Only accepts roles where "founder" or "co-founder" literally appears in
+    the title. CEO-only, founding engineer, EIR, etc. are excluded.
+
     Prioritizes by:
-      1. Strongest founder title match
+      1. co-founder (weight 10) > founder (weight 5)
       2. Most recent start_date among equals
 
     Returns:
@@ -533,40 +536,6 @@ def check_if_founder(row, check_json=True):
     if not experiences:
         return False, 0
 
-    # Assign weights to founder keywords
-    founder_keywords = {
-        "ceo": 5,
-        "co-founder": 10,
-        "founder & ceo": 10,
-        "ceo and co-founder": 10,
-        "CEO, co-founder": 10,
-        "cto, co-founder": 10,
-        "founder": 5,
-        "co-founder & ceo": 10,
-        "co-founder & cto": 5,
-        "co-founder & coo": 5,
-        "co-founder & cio": 5,
-        "co-founder & cfo": 5,
-        "co-founder & cmo": 5,
-        "co-founder & cso": 5,
-        "co-founder & cpo": 5,
-        "co-founder/ceo": 5,
-        "co-founder/cto": 5,
-        "co-founder/coo": 5,
-        "co-founder/cio": 5,
-        "co-founder/cfo": 5,
-        "co-founder/cmo": 5,
-        "co-founder/cso": 5,
-        "co-founder/cpo": 5,
-        "chief executive officer": 4,
-        "founder & chief executive officer": 5,
-        "founder & chief technical officer": 5,
-        "founding engineer": 3,
-        "founding scientist": 3,
-        "founder fellow": 2,   # weaker
-        "entrepreneur in residence": 1
-    }
-
     founder_exps = []
     for idx, exp in enumerate(experiences):
         if exp.get("end_date"):  # must be current
@@ -575,28 +544,25 @@ def check_if_founder(row, check_json=True):
         pos = (exp.get("position") or "").lower().strip()
         company = (exp.get("company_name") or "").lower().strip()
 
-        matched_weight = max(
-            (weight for kw, weight in founder_keywords.items() if kw == pos),
-            default=None
-        )
-        if not matched_weight:
-            if any(keyword in pos for keyword in founder_keywords.keys()):
-                matched_weight = 1
-            else:
-                matched_weight = 0
+        # Must contain "founder" in the title — covers "founder", "co-founder",
+        # "co-founder & ceo", "founder & cto", etc.
+        if "founder" not in pos:
+            continue
 
-        # Exclusion filters
+        # Exclusion: VC/investor roles
         if "partner" in pos or "investor" in pos:
             continue
         if any(ex in company for ex in ["ventures", "capital", "partners", "association", "community"]):
             continue
 
-        # parse start_date for comparison
+        # co-founder ranks higher than plain founder
+        weight = 10 if "co-founder" in pos else 5
+
+        # parse start_date for tie-breaking
         start_date = exp.get("start_date")
         parsed_start = None
         if start_date:
             try:
-                # Handle YYYY, YYYY-MM, or YYYY-MM-DD
                 if len(start_date) == 4:
                     parsed_start = datetime.strptime(start_date, "%Y")
                 elif len(start_date) == 7:
@@ -606,7 +572,7 @@ def check_if_founder(row, check_json=True):
             except Exception:
                 parsed_start = None
 
-        founder_exps.append((idx, matched_weight, parsed_start))
+        founder_exps.append((idx, weight, parsed_start))
 
     if not founder_exps:
         return False, 0
@@ -617,6 +583,87 @@ def check_if_founder(row, check_json=True):
     return True, best_idx
 
 
+def check_founder_pedigree(profile):
+    """
+    Use an LLM to check whether a founder has strong enough background to be
+    worth surfacing. Strict criteria: big tech, well-funded startup (>$100M),
+    or prestigious research lab / university research.
+
+    Looks at all_experiences and description_1 (current company). Deliberately
+    ignores the LinkedIn headline/summary which can be self-promotional.
+
+    Returns:
+        tuple: (passes: bool, reason: str)
+    """
+    from services.openai_api import ask_monty
+
+    all_experiences = profile.get("all_experiences") or []
+    if isinstance(all_experiences, str):
+        try:
+            all_experiences = json.loads(all_experiences)
+        except Exception:
+            all_experiences = []
+
+    company_description = profile.get("description_1") or ""
+
+    # Build a concise experience list for the LLM — company + position only,
+    # skip the current founding role (index == company_index)
+    current_idx = profile.get("company_index", 0)
+    exp_lines = []
+    for i, exp in enumerate(all_experiences):
+        if i == current_idx:
+            continue
+        company = (exp.get("company_name") or "").strip()
+        position = (exp.get("position") or "").strip()
+        if company or position:
+            exp_lines.append(f"- {position} at {company}")
+
+    if not exp_lines:
+        return False, "No prior experience to evaluate"
+
+    experience_text = "\n".join(exp_lines)
+    company_text = f"\nCurrent company description: {company_description}" if company_description else ""
+
+    prompt = """You are a strict filter for a seed-stage VC firm evaluating whether a founder has strong enough background to be worth reviewing.
+
+Evaluate the founder's prior work history (NOT their current startup) and return a JSON object with two fields:
+- "passes": true or false
+- "reason": one sentence explaining the decision
+
+Criteria for passing (at least ONE must be clearly met):
+1. Worked at a top-tier big tech company: Google/Alphabet, Meta/Facebook, Apple, Amazon, Microsoft, Nvidia, Netflix, Stripe, Uber, Airbnb, Twitter/X, LinkedIn, Salesforce, Snap, Lyft, DoorDash, Coinbase, Robinhood, Palantir, or similar well-known tech giants
+2. Worked at a well-funded startup — the company must be clearly recognizable as having raised substantial funding ($100M+), i.e. a known unicorn or high-profile startup
+3. Conducted genuine academic or industry research at a prestigious institution: MIT, Stanford, CMU, Caltech, Harvard, Oxford, Cambridge, ETH Zurich — or at a leading AI/tech research lab such as DeepMind, OpenAI, Anthropic, Google Brain, Microsoft Research, Meta AI Research, Bell Labs
+
+Be strict. "Employee #12 at a startup" does not pass. A generic software role at an unknown company does not pass. Only clearly recognizable high-caliber employers or research roles qualify.
+
+Respond with only the JSON object, no other text."""
+
+    data = f"Prior work history:\n{experience_text}{company_text}"
+
+    try:
+        response = ask_monty(prompt, data, max_tokens=150, model="gpt-4o-mini")
+        if not response:
+            return False, "No LLM response"
+
+        # Strip markdown code fences if present
+        cleaned = response.strip()
+        if cleaned.startswith("```"):
+            cleaned = cleaned.split("```")[1]
+            if cleaned.startswith("json"):
+                cleaned = cleaned[4:]
+        cleaned = cleaned.strip()
+
+        result = json.loads(cleaned)
+        passes = bool(result.get("passes", False))
+        reason = result.get("reason", "")
+        return passes, reason
+    except Exception as e:
+        logger.debug("Pedigree check error for %s: %s", profile.get("name", "unknown"), e)
+        # On parse failure, let it through rather than silently drop
+        return True, "Pedigree check failed to parse — allowed through"
+
+
 def monty_enrich_profile(profile):
 
     if profile["founder"]:
@@ -625,7 +672,7 @@ def monty_enrich_profile(profile):
         
         # Always set company_name from the person's experience first
         profile["company_name"] = company_info.get("company_name")
-        profile["description_1"] = company_info.get("description")
+        profile["description_1"] = None  # will be set by enrich_company if it succeeds
         
         # If we have a company_id, enrich with additional company data
         # but preserve the company_name from the person's experience
@@ -633,6 +680,15 @@ def monty_enrich_profile(profile):
         if company_id:
             original_company_name = profile["company_name"]
             profile = enrich_company(company_id, profile)
+            aviato_name = profile.get("company_name") or ""
+            # If Aviato returned a completely different company (no shared words),
+            # discard the description and website — it's a wrong match
+            if aviato_name and original_company_name:
+                orig_words = set((original_company_name or "").lower().split())
+                avia_words = set(aviato_name.lower().split())
+                if not orig_words & avia_words:
+                    profile["description_1"] = None
+                    profile["company_website"] = None
             # Restore the original company name from person's experience
             profile["company_name"] = original_company_name
 
@@ -762,8 +818,8 @@ def safe_insert_profile_to_db(profile_data, stealth=False):
         placeholders = ', '.join(['%s'] * len(cleaned_columns))
         values = list(cleaned_columns.values())
         
-        # Choose table and create insert query
-        table_name = "stealth_founders" if stealth else "founders"
+        # Always insert into founders table
+        table_name = "founders"
         
         # First check if profile already exists
         if 'profile_url' in cleaned_columns:
@@ -845,6 +901,16 @@ def process_profiles_aviato(max_profiles=10):
         mapped = map_aviato_to_schema(result)
         mapped['profile_url'] = url
         mapped = monty_enrich_profile(mapped)
+
+        # Pedigree check: store result on profile so it can be filtered downstream.
+        # Founders that fail are still saved to the DB (allows manual correction)
+        # but will be excluded from recommendations via pedigree_passes IS DISTINCT FROM false.
+        if mapped.get("founder"):
+            passes, reason = check_founder_pedigree(mapped)
+            mapped["pedigree_passes"] = passes
+            mapped["pedigree_reason"] = reason
+            if not passes:
+                logger.info("Flagged %s — pedigree check failed: %s", mapped.get("name", url), reason)
 
         mapped["source"] = row.get("source")
         mapped["access_date"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -1039,10 +1105,9 @@ def add_monty_data():
                                 if isinstance(exp, dict):
                                     position = exp.get('position', '')
                                     if position and isinstance(position, str):
-                                        position_lower = position.lower()
-                                        if any(keyword in position_lower for keyword in ['founder', 'co-founder', 'ceo']):
+                                        if 'founder' in position.lower():
                                             founder_count += 1
-                        
+
                         repeat_founder = founder_count > 1
                     except (json.JSONDecodeError, TypeError, AttributeError) as e:
                         logger.debug("Error parsing all_experiences for %s: %s", profile_dict.get('name', 'Unknown'), e)
@@ -2038,7 +2103,6 @@ if __name__ == "__main__":
     else:
         process_profiles_aviato(max_profiles=1000)
         add_monty_data()
-        add_ai_scoring()
         add_tree_analysis()
 
 

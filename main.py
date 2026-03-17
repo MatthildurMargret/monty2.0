@@ -12,9 +12,8 @@ from services.slack_bot import MontySlackBot
 
 # Import sync workflows
 from workflows.aviato_processing import (
-    process_profiles_aviato, 
-    add_monty_data, 
-    add_ai_scoring, 
+    process_profiles_aviato,
+    add_monty_data,
     add_tree_analysis,
     aviato_discover,
     setup_logging as setup_aviato_logging
@@ -64,7 +63,6 @@ class MontyApp:
             # Run the full processing pipeline
             process_profiles_aviato(max_profiles=300)
             add_monty_data()
-            add_ai_scoring()
             add_tree_analysis()
             
             logger.info("Aviato processing pipeline completed successfully")

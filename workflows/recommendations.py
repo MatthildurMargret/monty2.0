@@ -2,14 +2,14 @@
 Recommendations System for Monty
 =================================
 
-This module handles personalized founder/company recommendations sent to team members via Slack.
+This module handles personalized founder/company recommendations sent to team members via email.
 
 Main Functions:
 --------------
 1. send_extra_recs() - Main function to send recommendations to all users
    - Fetches new recommended profiles from the database
    - Matches them to each user's areas of interest (from taste tree in Supabase/JSON)
-   - Sends personalized Slack DMs with top 3 recommendations per user
+   - Sends personalized emails with top 3 recommendations per user
    - Marks sent recommendations to avoid duplicates
 
 2. find_new_recs(username) - Preview recommendations for a specific user (testing)
@@ -45,42 +45,318 @@ To preview recommendations for a specific user:
 
 Requirements:
 ------------
-- SLACK_BOT_TOKEN environment variable must be set
+- Gmail API credentials (GOOGLE_CREDENTIALS_BASE64) for sending email
 - Database must have 'founders' table with tree_result and history columns
 - Taste tree (in Supabase or data/taste_tree.json) must have 'montage_lead' metadata for user assignments
 - For Supabase: SUPABASE_URL and SUPABASE_KEY environment variables must be set
 """
 
+import json
+import sys
+import os
 import pandas as pd
 import time
-import os
 import warnings
+import re
+import html as html_module
+from datetime import datetime
 from psycopg2 import sql
+
+# Add tests directory to path so prepare_test_features is importable for ranking
+_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _root not in sys.path:
+    sys.path.insert(0, _root)
+sys.path.insert(0, os.path.join(_root, 'tests'))
 
 # Suppress pandas warnings
 warnings.filterwarnings('ignore', category=UserWarning)
 warnings.filterwarnings('ignore', category=pd.errors.SettingWithCopyWarning)
 
-# Slack user ID mapping
-user_map = {
-    "Todd": "U03KZ1KQF",
-    "Matt": "U9V59N8R1",
-    "Daphne": "U03L4HK4S",
-    "Connie": "U03JA4UARF1",
-    "Nia": "U04V74ZMZ7F",
-    "Matthildur": "U07MTGUFMSB"
+# Notion database IDs used for pipeline/tracked/passed filtering
+PIPELINE_ID = "15e30f29-5556-4fe1-89f6-76d477a79bf8"
+TRACKED_ID = "912974853b494f98a5652fcbff3ad795"
+PASSED_ID = "bc5f875961234aa6aa4b293cf1915ac2"
+
+# Email address mapping for recommendation delivery
+email_map = {
+    "Todd": "todd@montageventures.com",
+    "Matt": "matt@montageventures.com",
+    "Daphne": "daphne@montageventures.com",
+    "Connie": "connie@montageventures.com",
+    "Nia": "nia@montageventures.com",
+    "Matthildur": "matthildur@montageventures.com",
 }
+
+# When test=True, one email is sent to this address only (for verification)
+TEST_EMAIL_RECIPIENT = "matthildur@montageventures.com"
+
+# Vertical history per user — used for Exa discovery search.
+# Each user maps to a list of verticals in chronological order.
+# The LAST item is the current vertical that will be used for the next send.
+# To update: append a new vertical to the user's list.
+USER_VERTICALS = {
+    "Todd": [
+        "banking and credit for consumers",
+        "AI native engineering services",
+        "AI for payments, fraud, and financial infra"
+    ],
+    "Matt": [
+        "financial infrastructure",
+        "banking and credit",
+        "AI-native trading / investment"
+    ],
+    "Daphne": [
+        "AI drug discovery",
+        "Global retail enablement infrastructure",
+        "AI native ecommerce infra"
+    ],
+    "Connie": [
+        "AI for accounting",
+        "agentic commerce infrastructure",
+        "AI for tax & accounting / compliance"
+    ],
+    "Nia": [
+        "AI for mathematical reasoning",
+        "Neuroscience infrastructure (modeling and simulating brain)",
+        "Computational neuroscience / CNS drug discovery & development"
+    ],
+    "Matthildur": [
+        "AI for engineering physics simulation",
+        "Robotics and physical AI"
+    ],
+}
+
+
+def _current_vertical(user: str) -> str | None:
+    """Return the current (last) vertical for a user, or None if not configured."""
+    verticals = USER_VERTICALS.get(user)
+    if not verticals:
+        return None
+    return verticals[-1] if isinstance(verticals, list) else verticals
 
 # User category filter configuration
 # Maps username to a list of strings that must appear in the tree_path
 # If None or empty list, no filtering is applied (user gets all their assigned categories)
+# Multiple filter strings are supported - categories matching ANY of the strings will be included
+# Filter strings can be ANY substring in the tree_path - they don't need to be nodes assigned to the user
+# However, filtering only applies to categories already assigned to the user in the taste tree
 # Example: {"Connie": ["Commerce"]} means Connie only gets categories with "Commerce" in the tree_path
+# Example: {"Todd": ["Fintech", "Payments"]} means Todd gets categories with "Fintech" OR "Payments" in the tree_path
 user_category_filters = {
-    "Connie": ["Commerce"],  # Uncomment to enable filtering for Connie
-    # Add more users as needed:
-    #"Todd": ["Fintech"],
-    # "Daphne": ["Healthcare"],
+    # "Connie": ["Commerce"],  # Removed: Connie now gets all her assigned categories
+    #"Nia": ["Foundation & Frontier Models", "Fintech"]
+    # "Todd": ["Fintech", "Payments"],  # Multiple filter values - matches categories with either string
+    # "Daphne": ["Healthcare", "Biotech"],  # Multiple filter values example
+    # Add more users as needed
 }
+
+def is_company_less_than_2_years_old(building_since, max_years=2):
+    """
+    Check if a company has been building for less than the specified number of years.
+    
+    Args:
+        building_since: Date string in various formats (YYYY-MM-DD, "Month YYYY", YYYY, etc.) or None
+        max_years: Maximum years to consider (default: 2)
+    
+    Returns:
+        bool: True if company is less than max_years old, False otherwise (or if date is invalid/missing)
+    """
+    if pd.isna(building_since) or building_since is None or building_since == '':
+        # If no date available, include it (don't filter out)
+        return True
+    
+    try:
+        building_since_str = str(building_since).strip()
+        date_obj = None
+        
+        # Try to parse as ISO date (YYYY-MM-DD)
+        if re.match(r'^\d{4}-\d{2}-\d{2}', building_since_str):
+            date_obj = datetime.strptime(building_since_str[:10], '%Y-%m-%d')
+        # Try to parse as "Month YYYY" format (e.g., "Dec 2019", "December 2019")
+        elif re.match(r'^[A-Za-z]+\s+\d{4}', building_since_str):
+            # Try abbreviated month first, then full month name
+            for fmt in ['%b %Y', '%B %Y']:
+                try:
+                    date_obj = datetime.strptime(building_since_str, fmt)
+                    break
+                except ValueError:
+                    continue
+        # Try to parse as just year (YYYY)
+        elif re.match(r'^\d{4}$', building_since_str):
+            date_obj = datetime.strptime(building_since_str, '%Y')
+        # Try other common formats
+        else:
+            for fmt in ['%Y-%m-%d', '%Y-%m-%d %H:%M:%S', '%m/%d/%Y', '%d/%m/%Y']:
+                try:
+                    date_obj = datetime.strptime(building_since_str, fmt)
+                    break
+                except ValueError:
+                    continue
+        
+        if date_obj is None:
+            # Could not parse date, include it (don't filter out)
+            return True
+        
+        # Calculate years since that date
+        now = datetime.now()
+        delta = now - date_obj
+        years = delta.days / 365.25
+        
+        # Return True if less than max_years old
+        return years < max_years
+        
+    except (ValueError, TypeError, AttributeError):
+        # If parsing fails, include it (don't filter out)
+        return True
+
+
+def founder_tenure_at_company_less_than_2_years(row, max_years=2):
+    """
+    Check if the founder has been at their current company for less than max_years.
+    Uses all_experiences JSON to find the company and parse start_date.
+    
+    Args:
+        row: DataFrame row or dict with company_name, all_experiences, and optionally company_index
+        max_years: Maximum years at company (default: 2)
+    
+    Returns:
+        bool: True if tenure < max_years (or if we cannot determine), False if 2+ years
+    """
+    from services.deal_processing import normalize_company_name
+    
+    company_name = row.get('company_name')
+    if pd.isna(company_name) or not company_name:
+        return True  # Cannot determine, include
+    
+    all_exp = row.get('all_experiences')
+    if all_exp is None or (isinstance(all_exp, float) and pd.isna(all_exp)):
+        return True  # No experiences, include
+    
+    if isinstance(all_exp, str):
+        try:
+            all_exp = json.loads(all_exp) if all_exp.strip() else []
+        except (json.JSONDecodeError, TypeError):
+            return True
+    
+    if not isinstance(all_exp, list) or len(all_exp) == 0:
+        return True
+    
+    target_normalized = normalize_company_name(str(company_name))
+    if not target_normalized:
+        return True
+    
+    # Find matching experience: use company_index if available, else search by company name
+    exp = None
+    company_index = row.get('company_index')
+    if company_index is not None and not pd.isna(company_index):
+        try:
+            idx = int(company_index)
+            if 0 <= idx < len(all_exp):
+                e = all_exp[idx]
+                if isinstance(e, dict):
+                    exp_name = e.get('company_name') or e.get('company', '')
+                    if normalize_company_name(str(exp_name)) == target_normalized:
+                        exp = e
+        except (ValueError, TypeError):
+            pass
+    
+    if exp is None:
+        for e in all_exp:
+            if not isinstance(e, dict):
+                continue
+            exp_name = e.get('company_name') or e.get('company', '')
+            if normalize_company_name(str(exp_name)) == target_normalized:
+                exp = e
+                break
+    
+    if exp is None:
+        return True  # Could not find matching experience, include
+    
+    start_date = exp.get('start_date')
+    if not start_date or (isinstance(start_date, float) and pd.isna(start_date)):
+        return True  # No start date, include
+    
+    try:
+        start_str = str(start_date).strip()
+        date_obj = None
+        if re.match(r'^\d{4}$', start_str):
+            date_obj = datetime.strptime(start_str, '%Y')
+        elif re.match(r'^\d{4}-\d{2}', start_str):
+            if len(start_str) >= 7:
+                date_obj = datetime.strptime(start_str[:7], '%Y-%m')
+            else:
+                date_obj = datetime.strptime(start_str[:10], '%Y-%m-%d')
+        elif re.match(r'^[A-Za-z]+\s+\d{4}', start_str):
+            for fmt in ['%b %Y', '%B %Y']:
+                try:
+                    date_obj = datetime.strptime(start_str, fmt)
+                    break
+                except ValueError:
+                    continue
+        
+        if date_obj is None:
+            return True
+        
+        now = datetime.now()
+        delta = now - date_obj
+        years = delta.days / 365.25
+        return years < max_years
+    except (ValueError, TypeError, AttributeError):
+        return True
+
+
+# Matches "Founding Engineer", "Founding Advisor", "Founding Team Member", etc. —
+# roles that use "founding" as an adjective for a non-founder position.
+_NON_FOUNDER_TITLE_RE = re.compile(
+    r'\bfounding\s+(engineer|advisor|adviser|team\s*member|member|developer|designer|'
+    r'scientist|researcher|analyst|product\s*manager|pm|intern|associate)\b',
+    re.IGNORECASE
+)
+
+
+def is_founder_or_cofounder_at_current_company(row):
+    """Check that the person's current role is genuinely a founder/co-founder title.
+
+    Only returns False when a title is available and clearly indicates a non-founder
+    "founding" role (e.g. "Founding Engineer", "Founding Advisor"). Returns True when
+    the title is absent (benefit of the doubt) or when it's consistent with being a
+    founder (e.g. "Co-Founder", "Founder & CEO", "CEO").
+
+    Args:
+        row: DataFrame row or dict-like with 'title' and/or 'all_experiences'.
+
+    Returns:
+        bool: False only if a clearly non-founder founding title is found.
+    """
+    # Prefer the direct title field on the DB row
+    title = row.get('title') or ''
+
+    # Fall back to the most-recent entry in all_experiences
+    if not title:
+        all_exp = row.get('all_experiences')
+        if all_exp is not None and not (isinstance(all_exp, float) and pd.isna(all_exp)):
+            if isinstance(all_exp, str):
+                try:
+                    all_exp = json.loads(all_exp) if str(all_exp).strip() else []
+                except (json.JSONDecodeError, TypeError):
+                    all_exp = []
+            if isinstance(all_exp, list) and all_exp:
+                first = all_exp[0]
+                if isinstance(first, dict):
+                    title = (
+                        first.get('position') or
+                        first.get('title') or
+                        first.get('role') or ''
+                    )
+
+    if not title:
+        return True  # No title data — give benefit of the doubt
+
+    if _NON_FOUNDER_TITLE_RE.search(str(title)):
+        return False  # Confirmed non-founder "founding" role
+
+    return True
+
 
 def filter_categories_by_tree_path(categories, user):
     """Filter categories for a user based on tree_path filters.
@@ -118,47 +394,50 @@ def filter_categories_by_tree_path(categories, user):
     return filtered
 
 
-def find_new_recs(username, test=True):
+def find_new_recs(username, test=True, return_html_only=False):
     """Find new recommendations for a specific user (for testing/preview purposes).
-    
+
     Args:
         username: Name of the user to find recommendations for
-        test: If True, only prints recommendations. If False, sends Slack message.
+        test: If True, prints recommendations without sending email. If False, sends to the user's email.
+        return_html_only: If True, build and return HTML body without sending or printing; used by preview script.
+
+    Returns:
+        When return_html_only=True, returns the HTML body string or None if no recommendations.
     """
     from services.tree import get_nodes_and_names
-    from services.database import get_db_connection
     from services.path_mapper import get_all_matching_old_paths
-    
-    conn = get_db_connection()
-    if not conn:
-        print("❌ Failed to connect to the database")
-        return None
-    try:
-        new_profiles = pd.read_sql(f"""
-        SELECT *
-        FROM founders
-        WHERE founder = true
-        AND history = ''
-        AND (tree_result = 'Strong recommend' OR tree_result = 'Recommend')
-        """, conn)
-        new_profiles = new_profiles.drop_duplicates(subset=['name'])
-        new_profiles = new_profiles.reset_index(drop=True)        
-    except Exception as e:
-        print(f"Error fetching new profiles: {e}")
-        return None
-    finally:
-        if conn:
-            conn.close()
+    from services.model_loader import load_ranker_model
+    from services.ranker_inference import rank_profiles
 
-    columns_to_share = ['name', 'company_name', 'company_website', 'profile_url', 'tree_thesis', 'product', 'market', 'tree_path', 'past_success_indication_score', 'tree_result']
+    new_profiles = _fetch_and_filter_founders()
+    if new_profiles is None:
+        return None
+
+    columns_to_share = [
+        'name', 'company_name', 'company_website', 'profile_url',
+        'tree_thesis', 'product', 'market', 'tree_path',
+        'past_success_indication_score', 'tree_result',
+    ]
     recs = new_profiles[columns_to_share].copy()
     recs = recs.drop_duplicates(subset=['company_name'])
     recs = recs.drop_duplicates(subset=['name'])
     recs = recs.drop_duplicates(subset=['profile_url'])
     recs = recs.reset_index(drop=True)
 
+    # Load ranker for consistent ranking with send_extra_recs
+    ranker_inference = load_ranker_model()
+    prepare_test_features = None
+    if ranker_inference is not None:
+        try:
+            from test_models import prepare_test_features
+        except ImportError:
+            print("⚠️  Could not import prepare_test_features, skipping ranker")
+            ranker_inference = None
+
     # Load user interests from Supabase (with fallback to JSON)
-    print("Loading user interests from taste tree...")
+    if not return_html_only:
+        print("Loading user interests from taste tree...")
     nodes_and_names = get_nodes_and_names(use_supabase=True)
 
     recs['top_category'] = recs['tree_path'].apply(lambda x: x.split(' > ')[0] if pd.notna(x) else '')
@@ -166,99 +445,137 @@ def find_new_recs(username, test=True):
     for user, categories in nodes_and_names.items():
         if user != username:
             continue
-        print(f"\nProfiles for {user}")
-        print("-" * 60)
-        
+        if not return_html_only:
+            print(f"\nProfiles for {user}")
+            print("-" * 60)
+
         # Apply category filter if configured for this user
         categories = filter_categories_by_tree_path(categories, user)
-        
+
         if not categories:
             print(f"No categories remaining after filtering for {user}")
-            return
-        
-        profiles = pd.DataFrame()
+            return None
+
+        # Build profile pool, tracking the depth and the matched user-category per profile.
+        # deeper match = more specific alignment with what this user cares about.
+        profiles_chunks = []
         for category in categories:
-            # Get all old paths that map to this new category
             old_paths = get_all_matching_old_paths(category)
-            
-            # Match profiles using both new and old paths
-            # First try new path (for any newly categorized profiles)
+            cat_depth = category.count(' > ') + 1
+
             matching = recs[recs['tree_path'].str.contains(category, na=False, regex=False)]
-            
-            # Then match using old paths (for existing database entries)
             for old_path in old_paths:
                 old_matching = recs[recs['tree_path'].str.contains(old_path, na=False, regex=False)]
                 matching = pd.concat([matching, old_matching])
-            
-            # Remove duplicates and add to profiles
+
             matching = matching.drop_duplicates(subset=['name', 'company_name'])
-            profiles = pd.concat([profiles, matching])
-        
-        if len(profiles) == 0:
+            if not matching.empty:
+                matching = matching.copy()
+                matching['match_depth'] = cat_depth
+                matching['matched_category'] = category  # user interest category that triggered this match
+                profiles_chunks.append(matching)
+
+        if not profiles_chunks:
             print(f"No matching profiles found for {user}")
-            return
-        
-        profiles['category'] = profiles['tree_path'].apply(lambda x: x.split(' > ')[-2] if len(x.split(' > ')) > 1 else x)
+            return None
 
-        # Get top profile from each category
-        profiles = profiles.groupby('category').head(1)
-
+        profiles = pd.concat(profiles_chunks)
+        # Keep each profile's deepest match (sort desc before dedup preserves the best row)
+        profiles = profiles.sort_values('match_depth', ascending=False)
+        profiles['category'] = profiles['tree_path'].apply(
+            lambda x: x.split(' > ')[-2] if len(x.split(' > ')) > 1 else x
+        )
         profiles = profiles.drop_duplicates(subset=['company_name'])
         profiles = profiles.drop_duplicates(subset=['name'])
         profiles = profiles.reset_index(drop=True)
-        profiles.sort_values(by=['tree_result', 'past_success_indication_score'], ascending=[False, False], inplace=True)
-        
+
+        if len(profiles) == 0:
+            print(f"No matching profiles found for {user}")
+            return None
+
+        # Rank with model (or fall back to heuristic sort)
+        if ranker_inference is not None:
+            profiles_full = profiles[['name', 'company_name']].merge(
+                new_profiles, on=['name', 'company_name'], how='left'
+            )
+            profiles_ranked = rank_profiles(profiles_full, ranker_inference, prepare_test_features)
+            if 'ranker_score' in profiles_ranked.columns:
+                score_map = dict(zip(
+                    zip(profiles_ranked['name'], profiles_ranked['company_name']),
+                    profiles_ranked['ranker_score']
+                ))
+                profiles['ranker_score'] = profiles.apply(
+                    lambda r: score_map.get((r['name'], r['company_name']), 0.0), axis=1
+                )
+                profiles.sort_values(by=['ranker_score', 'match_depth'], ascending=[False, False], inplace=True)
+            else:
+                profiles.sort_values(
+                    by=['match_depth', 'past_success_indication_score'],
+                    ascending=[False, False], inplace=True
+                )
+        else:
+            profiles.sort_values(
+                by=['match_depth', 'past_success_indication_score'],
+                ascending=[False, False], inplace=True
+            )
+
         # Take top 3
         profiles = profiles.head(3)
 
-        print(f"Found {len(profiles)} recommendations:\n")
-        
-        # Build category string for greeting
-        categories_mentioned = profiles['tree_path'].unique()
-        category_string = ""
-        for category in categories_mentioned:
-            last_node = category.split(' > ')[-2] if len(category.split(' > ')) > 1 else category.split(' > ')[0]
-            category_string += f"{last_node}, "
-        category_string = category_string[:-2]  # Remove trailing comma
-        
-        # Build Slack message
+        if not return_html_only:
+            print(f"Found {len(profiles)} recommendations:\n")
+
+        # Build category string from the matched user-interest categories (not the profile paths).
+        # Use the last (most specific) node of each matched category, deduplicated.
+        seen_cats: set = set()
+        category_parts = []
+        for cat in profiles['matched_category']:
+            label = cat.split(' > ')[-1]
+            if label not in seen_cats:
+                seen_cats.add(label)
+                category_parts.append(label)
+        category_string = ", ".join(category_parts)
+
+        # Build greeting and message (console preview uses Slack-style text)
         greeting_text = f"Hey {user}! I came across these profiles in {category_string} that I wanted to share with you."
         message_lines = [greeting_text]
-        
+
         for _, row in profiles.iterrows():
-            # Format each recommendation
             line = (
                 f"• <{fix_profile_url(row['profile_url'])}|*{row['name']}*> at {fix_company_url(row['company_website'], row['company_name'])}\n"
                 f"    {row['product']}"
             )
             message_lines.append(line)
-            
-            # Print to console
+
             profile_link = fix_profile_url(row['profile_url'])
-            print(f"  - {row['name']} at {row['company_name']} ({row['tree_result']})")
-            print(f"    Profile: {profile_link}")
-            print(f"    Category: {row['tree_path']}")
-            print()
-        
+            if not return_html_only:
+                print(f"  - {row['name']} at {row['company_name']} ({row['tree_result']})")
+                print(f"    Profile: {profile_link}")
+                print(f"    Category: {row['tree_path']}")
+                print()
+
         message = "\n\n".join(message_lines)
-        
-        # Send message if not in test mode
-        user_id = user_map.get(user)
-        if user_id:
-            if test:
-                print("=" * 60)
-                print("TEST MODE - Message preview:")
-                print("=" * 60)
-                print(message)
-                print("=" * 60)
-                print("Won't send Slack message (test=True)")
-            else:
-                print("=" * 60)
-                print(f"Sending Slack message to {user} ({user_id})")
-                send_slack_dm(user_id, message)
-                print("✅ Message sent!")
+        html_body = build_recommendation_email_html(profiles, greeting_text)
+
+        if return_html_only:
+            return html_body
+
+        if test:
+            print("=" * 60)
+            print("TEST MODE - Message preview:")
+            print("=" * 60)
+            print(message)
+            print("=" * 60)
+            print("TEST MODE - skipping email send.")
         else:
-            print(f"⚠️  No Slack user ID found for {user}")
+            to_email = email_map.get(user)
+            if to_email:
+                print("=" * 60)
+                print(f"Sending recommendation email to {user} ({to_email})")
+                send_recommendation_email(to_email, "Monty recommendations for you", html_body)
+                print("✅ Message sent!")
+            else:
+                print(f"⚠️  No email found for {user}")
 
 
 def fix_profile_url(url):
@@ -279,32 +596,347 @@ def fix_company_url(url, company_name):
     return f"<{url}|*{company_name}*>"
 
 
-def send_slack_dm(user_id, message):
-    """Send a direct message to a Slack user.
+def _company_url_for_html(url, company_name):
+    """Return (url, display_text) for company link in HTML. If no URL, return (None, company_name)."""
+    if not url or url == '' or pd.isna(url):
+        return None, company_name
+    if not url.startswith('http'):
+        url = f"https://{url}"
+    return url, company_name
+
+
+# ---------------------------------------------------------------------------
+# Exa vertical discovery — same algorithm as tests/test_exa_vertical_search.py
+# ---------------------------------------------------------------------------
+
+def _exa_pre_filter(r: dict) -> bool:
+    """Keep only profiles whose Exa title or highlight contains 'founder'/'co-founder'."""
+    combined = (r["title"] + " " + " ".join(r["highlights"])).lower()
+    return "founder" in combined or "co-founder" in combined
+
+
+def _llm_relevance_filter(r: dict, vertical: str) -> tuple[bool, str]:
+    """Use GPT-4o-mini to check if this Exa profile is actually relevant to the vertical.
+
+    Runs before Aviato enrichment so we only use the Exa title + highlights.
+    Returns (keep: bool, reason: str).
+    """
+    try:
+        from openai import OpenAI
+        client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        text = f"Title: {r['title']}\n\nHighlights:\n" + "\n".join(r["highlights"])
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a venture capital analyst screening founder profiles. "
+                        "Given a founder's LinkedIn title and highlights, decide if: "
+                        "(1) they appear to be founding or co-founding an early-stage startup (not just an employee or executive at an established company), AND "
+                        "(2) that startup is relevant or adjacent to the specified vertical. "
+                        "Be lenient on relevance — if there is a reasonable connection, lean YES. "
+                        "Only answer NO if the profile is clearly not a startup founder, or clearly unrelated to the vertical. "
+                        "Reply with YES or NO followed by a short reason on the same line. "
+                        "Example: YES — founding an AI simulation startup for engineering workflows"
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": f"Vertical: {vertical}\n\n{text}",
+                },
+            ],
+            max_tokens=60,
+            temperature=0,
+        )
+        answer = (response.choices[0].message.content or "").strip()
+        keep = answer.upper().startswith("YES")
+        return keep, answer
+    except Exception as e:
+        # If LLM call fails, let the profile through rather than silently dropping it
+        return True, f"LLM filter skipped ({e})"
+
+def _exa_post_filter(mapped: dict) -> tuple[bool, str]:
+    """Reject non-US or stale founder roles after Aviato enrichment."""
+    if not mapped.get("founder"):
+        return False, "not a founder"
+    location = mapped.get("location") or ""
+    _allowed = ("united states", "united kingdom", ", uk", "uk,")
+    if location and not any(k in location.lower() for k in _allowed):
+        return False, f"non-US/UK location: {location}"
+    cutoff_year = datetime.now().year - 3
+    idx = mapped.get("company_index", 0)
+    all_exp = mapped.get("all_experiences") or []
+    if idx < len(all_exp):
+        start = (all_exp[idx].get("start_date") or "")[:4]
+        try:
+            if int(start) < cutoff_year:
+                return False, f"founder role started {start}"
+        except (ValueError, TypeError):
+            pass
+    return True, "ok"
+
+def get_exa_profiles_for_vertical(vertical: str, num_results: int = 10) -> list:
+    """Run Exa search for a vertical and return enriched founder dicts (max 3).
+
+    Uses the same flow as tests/test_exa_vertical_search.py:
+      Exa search → pre-filter → Aviato /person/enrich → map_aviato_to_schema
+      → post-filter → monty_enrich_profile
+    """
+    try:
+        from exa_py import Exa
+    except ImportError:
+        print("  ⚠️  exa_py not installed — skipping Exa search")
+        return []
+
+    api_key = os.getenv("EXA_API_KEY")
+    if not api_key:
+        print("  ⚠️  EXA_API_KEY not set — skipping Exa search")
+        return []
+
+    from workflows.aviato_processing import get_linkedin_id, enrich_profile, map_aviato_to_schema, monty_enrich_profile
+    from services.database import clean_linkedin_url
+
+    query = f"Founders of {vertical} startups that were founded within the last 2 years in the US"
+    exa = Exa(api_key)
+    response = None
+    for _attempt in range(3):
+        try:
+            response = exa.search(
+                query,
+                category="people",
+                type="deep",
+                num_results=num_results,
+                contents={"highlights": {"max_characters": 2000}},
+            )
+            break
+        except Exception as e:
+            if _attempt < 2:
+                time.sleep(5)
+            else:
+                print(f"  ⚠️  Exa search failed after 3 attempts: {e}")
+                return []
+
+    results = [
+        {
+            "url":        getattr(r, "url", None) or "",
+            "title":      getattr(r, "title", None) or "",
+            "highlights": getattr(r, "highlights", []) or [],
+        }
+        for r in response.results
+        if "linkedin.com/in/" in (getattr(r, "url", None) or "")
+    ]
+
+    enriched = []
+    for r in results:
+        if not _exa_pre_filter(r):
+            continue
+        keep, _ = _llm_relevance_filter(r, vertical)
+        if not keep:
+            continue
+        url_clean   = clean_linkedin_url(r["url"])
+        linkedin_id = get_linkedin_id(r["url"])
+        raw = enrich_profile(linkedin_id, url_clean)
+        if raw is None:
+            continue
+        mapped = map_aviato_to_schema(raw)
+        mapped["profile_url"] = url_clean
+        mapped["source"]      = f"exa_vertical:{vertical}"
+        keep, reason = _exa_post_filter(mapped)
+        if not keep:
+            continue
+        mapped = monty_enrich_profile(mapped)
+        mapped["access_date"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        mapped = _run_exa_pipeline(mapped)
+        enriched.append(mapped)
+
+    return enriched
+
+
+def _run_exa_pipeline(profile: dict) -> dict:
+    """Run the full AI enrichment pipeline on an Exa-sourced profile dict.
+
+    Called after monty_enrich_profile() to add product/market, verticals,
+    company/school tags, technical flag, repeat_founder, and tree_path.
+    Any step that fails is silently skipped so the profile is still returned.
+    """
+    from services.profile_analysis import extract_info_from_website, extract_info_from_description_only, is_technical_founder
+    from services.ai_parsing import get_past_notable_company, get_past_notable_education, generate_verticals
+    from services.tree import tree_analysis
+
+    # tree_analysis expects location_1; map_aviato_to_schema only sets location
+    profile.setdefault("location_1", profile.get("location") or "")
+    profile.setdefault("product", "")
+    profile.setdefault("market", "")
+    profile.setdefault("funding", "")
+
+    # 1. Format funding string (tree_analysis uses it for the funding_filter check)
+    try:
+        amount = float(profile.get("fundingamount") or 0)
+        deal_type = profile.get("latestdealtype") or ""
+        if amount and deal_type:
+            if amount >= 1_000_000_000:
+                fmt = f"{amount / 1_000_000_000:.1f}B"
+            elif amount >= 1_000_000:
+                fmt = f"{amount / 1_000_000:.1f}M"
+            elif amount >= 1_000:
+                fmt = f"{amount / 1_000:.1f}K"
+            else:
+                fmt = str(int(amount))
+            profile["funding"] = f"US$ {fmt}, {deal_type}"
+    except (ValueError, TypeError):
+        pass
+
+    # 2. Product and market from website / description
+    try:
+        website = profile.get("company_website") or ""
+        description = profile.get("description_1") or ""
+        if website and website != "Not available":
+            info = extract_info_from_website(website, description)
+        elif description and description != "Not available":
+            info = extract_info_from_description_only(description)
+        else:
+            info = {}
+        profile["product"] = (info.get("product_description") or "")[:500]
+        profile["market"]  = (info.get("market_description") or "")[:500]
+    except Exception:
+        pass
+
+    # 3. AI-generated verticals
+    try:
+        profile["verticals"] = generate_verticals(profile, use_json=True)
+    except Exception:
+        pass
+
+    # 4. Company / school tags
+    try:
+        profile["company_tags"] = get_past_notable_company(profile, use_json=True)
+    except Exception:
+        pass
+    try:
+        profile["school_tags"] = get_past_notable_education(profile)
+    except Exception:
+        pass
+
+    # 5. Technical / repeat-founder flags
+    try:
+        profile["technical"] = is_technical_founder(profile)
+    except Exception:
+        pass
+    try:
+        all_exp = profile.get("all_experiences") or []
+        if isinstance(all_exp, str):
+            import json as _json
+            all_exp = _json.loads(all_exp)
+        founder_count = sum(
+            1 for e in all_exp
+            if isinstance(e, dict) and any(
+                kw in (e.get("position") or "").lower()
+                for kw in ("founder", "co-founder", "ceo")
+            )
+        )
+        profile["repeat_founder"] = founder_count > 1
+    except Exception:
+        pass
+
+    # 6. Tree analysis — places profile in the investment thesis tree
+    try:
+        profile = tree_analysis(profile)
+    except Exception:
+        pass
+
+    return profile
+
+
+def build_recommendation_email_html(profiles, greeting_text, exa_profiles=None, exa_vertical=None, exa_intro=None):
+    """Build HTML body for a recommendation email.
+
+    Args:
+        profiles: DataFrame with classic recommendations
+        greeting_text: Opening greeting line
+        exa_profiles: Optional list of Aviato-enriched dicts from Exa discovery
+        exa_vertical: The vertical string used for the Exa search (for the intro sentence)
+
+    Returns:
+        str: HTML fragment safe to embed in an email body
+    """
+    parts = []
+    if greeting_text:
+        parts += [
+            '<p style="margin-bottom: 1em;">',
+            html_module.escape(greeting_text),
+            '</p>',
+        ]
+    parts.append('<ul style="margin: 0; padding-left: 1.5em;">')
+    for _, row in (profiles.iterrows() if profiles is not None and len(profiles) > 0 else iter([])):
+        profile_url = fix_profile_url(row['profile_url'])
+        company_url, company_name = _company_url_for_html(row.get('company_website'), row.get('company_name', ''))
+        name_esc = html_module.escape(str(row.get('name', '')))
+        company_esc = html_module.escape(str(company_name))
+        product_esc = html_module.escape(str(row.get('product', '')))
+        name_link = f'<a href="{html_module.escape(profile_url)}"><strong>{name_esc}</strong></a>'
+        if company_url:
+            company_link = f'<a href="{html_module.escape(company_url)}"><strong>{company_esc}</strong></a>'
+        else:
+            company_link = f'<strong>{company_esc}</strong>'
+        parts.append(
+            f'<li style="margin-bottom: 0.75em;">{name_link} at {company_link}<br/>'
+            f'<span style="color: #555;">{product_esc}</span></li>'
+        )
+    parts.append('</ul>')
+
+    # Exa section — only appended when profiles were found
+    if exa_profiles:
+        if exa_intro:
+            intro = html_module.escape(exa_intro)
+        else:
+            vertical_label = html_module.escape(exa_vertical or "this vertical")
+            intro = (
+                f"Additionally, since I know you're looking into {vertical_label}, "
+                f"I just found these profiles and wanted to share in case it's interesting."
+            )
+        parts.append(f'<p style="margin-top: 2em; margin-bottom: 0.75em;">{intro}</p>')
+        parts.append('<ul style="margin: 0; padding-left: 1.5em;">')
+        for p in exa_profiles:
+            profile_url = fix_profile_url(p.get("profile_url") or p.get("linkedin_url") or "")
+            company_url, company_name = _company_url_for_html(
+                p.get("company_website"), p.get("company_name") or ""
+            )
+            name_esc    = html_module.escape(str(p.get("name") or ""))
+            company_esc = html_module.escape(str(company_name))
+            desc_esc    = html_module.escape(str(p.get("product") or p.get("description_1") or "")[:300])
+            name_link   = f'<a href="{html_module.escape(profile_url)}"><strong>{name_esc}</strong></a>'
+            if company_url:
+                company_link = f'<a href="{html_module.escape(company_url)}"><strong>{company_esc}</strong></a>'
+            else:
+                company_link = f'<strong>{company_esc}</strong>'
+            parts.append(
+                f'<li style="margin-bottom: 0.75em;">{name_link} at {company_link}<br/>'
+                f'<span style="color: #555;">{desc_esc}</span></li>'
+            )
+        parts.append('</ul>')
+
+    return '\n'.join(parts)
+
+
+def send_recommendation_email(to_email, subject, html_body):
+    """Send a recommendation email using the Gmail API.
     
     Args:
-        user_id: Slack user ID (e.g., 'U07MTGUFMSB')
-        message: Message text to send
+        to_email: Recipient email address (str or list)
+        subject: Email subject line
+        html_body: HTML body of the email
+    
+    Returns:
+        bool: True if sent successfully
     """
-    from slack_sdk import WebClient
-    from slack_sdk.errors import SlackApiError
-    
-    slack_token = os.getenv("SLACK_BOT_TOKEN")
-    if not slack_token:
-        print("❌ SLACK_BOT_TOKEN not found in environment")
-        return False
-    
-    client = WebClient(token=slack_token)
-    
-    try:
-        response = client.chat_postMessage(
-            channel=user_id,
-            text=message
-        )
+    from services.google_client import send_html_email
+    result = send_html_email(to_email, subject, html_body)
+    if result:
+        print(f"✅ Recommendation email sent to {to_email}")
         return True
-    except SlackApiError as e:
-        print(f"❌ Error sending Slack message: {e.response['error']}")
-        return False
+    print(f"❌ Failed to send recommendation email to {to_email}")
+    return False
 
 
 def mark_prev_recs(names=None, companies=None):
@@ -331,14 +963,16 @@ def mark_prev_recs(names=None, companies=None):
         
     try:
         cur = conn.cursor()
+        date_str = datetime.now().strftime("%Y-%m-%d")
+        history_value = f"recommended train {date_str}"
         for table_name in ["founders", "stealth_founders"]:
             query = sql.SQL(
-                "UPDATE {} SET history = 'recommended train' WHERE name = ANY(%s) OR company_name = ANY(%s);"
+                "UPDATE {} SET history = %s WHERE name = ANY(%s) OR company_name = ANY(%s);"
             ).format(sql.Identifier(table_name))
-            cur.execute(query, (list(all_names), list(companies_set)))
+            cur.execute(query, (history_value, list(all_names), list(companies_set)))
             print(f"Updated {cur.rowcount} records in {table_name}.")
         conn.commit()
-        print(f"✅ Successfully marked profiles as 'recommended train'.")
+        print(f"✅ Successfully marked profiles as '{history_value}'.")
     except Exception as e:
         print(f"❌ Error updating records: {e}")
         conn.rollback()
@@ -349,156 +983,160 @@ def mark_prev_recs(names=None, companies=None):
             conn.close()
 
 
-def send_extra_recs(test=True):
-    """Send personalized recommendations to all Slack users based on their interests.
-    
-    This function:
-    1. Fetches new recommended profiles from the database
-    2. Matches them to each user's areas of interest (from the taste tree)
-    3. Uses ML model to rank profiles by combined_score
-    4. Sends personalized Slack DMs with top 3 recommendations per user
-    5. Marks sent recommendations to avoid duplicates
+def _fetch_and_filter_founders():
+    """Fetch all active founders from the database and apply standard quality filters.
+
+    Shared by find_new_recs() and send_extra_recs() to avoid duplicating the
+    fetch + filter + dedup logic.
+
+    Filters applied (in order):
+      1. building_since < 2 years ago
+      2. location contains "United States"
+      3. company_name does not contain "(YC "
+      4. founder tenure at current company < 2 years
+
+    Returns:
+        pd.DataFrame of filtered, deduplicated founders (all columns), or None on DB error.
     """
-    import sys
-    import os
-    # Add tests directory to path to import model inference
-    sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(__file__)), 'tests'))
-    
-    import json
-    import numpy as np
-    from services.tree import get_nodes_and_names
     from services.database import get_db_connection
-    from services.path_mapper import get_all_matching_old_paths
-    from services.notion import import_pipeline, normalize_string
-    from test_models import prepare_test_features
-    from psycopg2 import sql
-    
-    try:
-        import xgboost as xgb
-    except ImportError:
-        xgb = None
-    
-    # Notion database IDs
-    PIPELINE_ID = "15e30f29-5556-4fe1-89f6-76d477a79bf8"
-    TRACKED_ID = "912974853b494f98a5652fcbff3ad795"
-    PASSED_ID = "bc5f875961234aa6aa4b293cf1915ac2"
-    
-    # Load ranker-only model for ranking
-    model_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data', 'models')
-    print(f"\nLoading ranker-only model from {model_dir}...")
-    ranker_inference = None
-    
-    if xgb is None:
-        print("❌ xgboost not available, falling back to tree_result sorting")
-    else:
-        try:
-            # Load ranker-only model and metadata
-            ranker_path = os.path.join(model_dir, 'ranker_only_xgb.json')
-            ranker_metadata_path = os.path.join(model_dir, 'ranker_only_feature_metadata.json')
-            ranker_model_metadata_path = os.path.join(model_dir, 'ranker_only_metadata.json')
-            
-            if not os.path.exists(ranker_path):
-                print(f"❌ Ranker-only model not found at {ranker_path}")
-                print("Falling back to tree_result and past_success_indication_score sorting")
-            else:
-                # Load metadata
-                with open(ranker_metadata_path, 'r') as f:
-                    ranker_metadata = json.load(f)
-                with open(ranker_model_metadata_path, 'r') as f:
-                    ranker_model_metadata = json.load(f)
-                
-                # Load ranker model
-                ranker = xgb.XGBRanker()
-                ranker.load_model(ranker_path)
-                
-                # Get normalization parameters
-                norm_params = ranker_model_metadata.get('ranker_normalization', {})
-                ranker_min = norm_params.get('min')
-                ranker_max = norm_params.get('max')
-                
-                ranker_inference = {
-                    'ranker': ranker,
-                    'metadata': ranker_metadata,
-                    'ranker_min': ranker_min,
-                    'ranker_max': ranker_max
-                }
-                
-                print("✅ Ranker-only model loaded successfully")
-                print(f"  Ranker normalization: min={ranker_min}, max={ranker_max}")
-        except Exception as e:
-            print(f"❌ Error loading ranker-only model: {e}")
-            print("Falling back to tree_result and past_success_indication_score sorting")
-            ranker_inference = None
-    
+
     conn = get_db_connection()
     if not conn:
         print("❌ Failed to connect to the database")
         return None
-    
     try:
-        # Fetch all new profiles that are recommended but haven't been sent yet
         new_profiles = pd.read_sql("""
         SELECT *
         FROM founders
         WHERE founder = true
         AND history = ''
+        AND (pedigree_passes IS DISTINCT FROM false)
         """, conn)
         new_profiles = new_profiles.drop_duplicates(subset=['name'])
         new_profiles = new_profiles.reset_index(drop=True)
-        
         print(f"Found {len(new_profiles)} new recommended profiles")
-        
     except Exception as e:
         print(f"❌ Error fetching new profiles: {e}")
         return None
     finally:
-        if conn:
-            conn.close()
-    
-    # Keep full profiles for feature preparation, but also create a filtered version for matching
-    # Remove duplicates from full dataset
+        conn.close()
+
+    # Filter out companies that are 2 years or older
+    if 'building_since' in new_profiles.columns:
+        initial_count = len(new_profiles)
+        new_profiles = new_profiles[new_profiles['building_since'].apply(
+            lambda x: is_company_less_than_2_years_old(x, max_years=2)
+        )].copy()
+        filtered_count = initial_count - len(new_profiles)
+        if filtered_count > 0:
+            print(f"Filtered out {filtered_count} companies that are 2+ years old (remaining: {len(new_profiles)})")
+    else:
+        print("⚠️  Warning: 'building_since' column not found in database, skipping age filter")
+
+    # Filter to founders with "United States" in location only
+    if 'location' in new_profiles.columns:
+        initial_count = len(new_profiles)
+        new_profiles = new_profiles[
+            new_profiles['location'].fillna('').astype(str).str.lower().str.contains('united states', na=False)
+        ].copy()
+        filtered_count = initial_count - len(new_profiles)
+        if filtered_count > 0:
+            print(f"Filtered out {filtered_count} founders without United States in location (remaining: {len(new_profiles)})")
+    else:
+        print("⚠️  Warning: 'location' column not found in database, skipping location filter")
+
+    # Filter out companies with (YC XXX) in company name
+    if 'company_name' in new_profiles.columns:
+        initial_count = len(new_profiles)
+        new_profiles = new_profiles[
+            ~new_profiles['company_name'].fillna('').astype(str).str.contains('(YC ', regex=False, na=False)
+        ].copy()
+        filtered_count = initial_count - len(new_profiles)
+        if filtered_count > 0:
+            print(f"Filtered out {filtered_count} companies with (YC XXX) in name (remaining: {len(new_profiles)})")
+
+    # Filter out founders at current company 2+ years (using all_experiences)
+    if 'all_experiences' in new_profiles.columns:
+        initial_count = len(new_profiles)
+        new_profiles = new_profiles[
+            new_profiles.apply(
+                lambda r: founder_tenure_at_company_less_than_2_years(r, max_years=2),
+                axis=1
+            )
+        ].copy()
+        filtered_count = initial_count - len(new_profiles)
+        if filtered_count > 0:
+            print(f"Filtered out {filtered_count} founders at company 2+ years (remaining: {len(new_profiles)})")
+
+    # Filter out profiles whose current title is a non-founder "founding" role
+    # (e.g. "Founding Engineer", "Founding Advisor") — these are not company founders.
+    initial_count = len(new_profiles)
+    new_profiles = new_profiles[
+        new_profiles.apply(is_founder_or_cofounder_at_current_company, axis=1)
+    ].copy()
+    filtered_count = initial_count - len(new_profiles)
+    if filtered_count > 0:
+        print(f"Filtered out {filtered_count} non-founder 'founding' roles (remaining: {len(new_profiles)})")
+
     new_profiles = new_profiles.drop_duplicates(subset=['company_name'])
     new_profiles = new_profiles.drop_duplicates(subset=['name'])
     new_profiles = new_profiles.drop_duplicates(subset=['profile_url'])
     new_profiles = new_profiles.reset_index(drop=True)
-    
     print(f"After deduplication: {len(new_profiles)} unique profiles")
-    
-    # Load companies from Notion pipeline/tracked/passed databases
+
+    return new_profiles
+
+
+def send_extra_recs(test=True, include_exa=True):
+    """Send personalized recommendations to all users via email based on their interests.
+
+    This function:
+    1. Fetches new recommended profiles from the database
+    2. Matches them to each user's areas of interest (from the taste tree)
+    3. Uses ML model to rank profiles by combined_score
+    4. Sends personalized emails with top 3 recommendations per user (or one test email to matthildur when test=True)
+    5. When test=False, marks sent recommendations to avoid duplicates
+    """
+    from concurrent.futures import ThreadPoolExecutor
+    from services.tree import get_nodes_and_names
+    from services.database import get_db_connection
+    from services.path_mapper import get_all_matching_old_paths
+    from services.notion import import_pipeline, normalize_string
+    from services.model_loader import load_ranker_model
+    from services.ranker_inference import rank_profiles
+    from test_models import prepare_test_features
+
+    # Load ranker-only model (shared loader — no duplicate boilerplate)
+    ranker_inference = load_ranker_model()
+
+    # Fetch and filter founders (shared helper — no duplicate filter blocks)
+    new_profiles = _fetch_and_filter_founders()
+    if new_profiles is None:
+        return None
+
+    # Load companies from Notion pipeline/tracked/passed databases (parallelized)
     print("\nLoading companies from Notion databases...")
-    pipeline_companies = set()
-    tracked_companies = set()
-    passed_companies = set()
-    
-    try:
-        pipeline_df = import_pipeline(PIPELINE_ID)
-        for company_name in pipeline_df['company_name'].dropna():
-            normalized = normalize_string(str(company_name))
-            if normalized:
-                pipeline_companies.add(normalized)
-        print(f"  Pipeline: {len(pipeline_companies)} companies")
-    except Exception as e:
-        print(f"  ⚠️  Error loading pipeline: {e}")
-    
-    try:
-        tracked_df = import_pipeline(TRACKED_ID)
-        for company_name in tracked_df['company_name'].dropna():
-            normalized = normalize_string(str(company_name))
-            if normalized:
-                tracked_companies.add(normalized)
-        print(f"  Tracked: {len(tracked_companies)} companies")
-    except Exception as e:
-        print(f"  ⚠️  Error loading tracked: {e}")
-    
-    try:
-        passed_df = import_pipeline(PASSED_ID)
-        for company_name in passed_df['company_name'].dropna():
-            normalized = normalize_string(str(company_name))
-            if normalized:
-                passed_companies.add(normalized)
-        print(f"  Passed: {len(passed_companies)} companies")
-    except Exception as e:
-        print(f"  ⚠️  Error loading passed: {e}")
+
+    def _load_notion_set(db_id, label):
+        result = set()
+        try:
+            df = import_pipeline(db_id)
+            for company_name in df['company_name'].dropna():
+                normalized = normalize_string(str(company_name))
+                if normalized:
+                    result.add(normalized)
+            print(f"  {label}: {len(result)} companies")
+        except Exception as e:
+            print(f"  ⚠️  Error loading {label}: {e}")
+        return result
+
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        fut_pipeline = executor.submit(_load_notion_set, PIPELINE_ID, 'Pipeline')
+        fut_tracked = executor.submit(_load_notion_set, TRACKED_ID, 'Tracked')
+        fut_passed = executor.submit(_load_notion_set, PASSED_ID, 'Passed')
+        pipeline_companies = fut_pipeline.result()
+        tracked_companies = fut_tracked.result()
+        passed_companies = fut_passed.result()
     
     # Check which companies are already in Notion and update database
     print("\nChecking for companies already in Notion databases...")
@@ -586,6 +1224,7 @@ def send_extra_recs(test=True):
     
     all_names = []
     companies = []
+    test_emails = {}  # user -> html_body, collected in test mode for preview
     
     # Process each user
     for user, categories in nodes_and_names.items():
@@ -598,168 +1237,78 @@ def send_extra_recs(test=True):
             print(f"  ⚠️  No categories remaining after filtering for {user}")
             continue
         
-        # Filter profiles matching this user's categories
-        profiles = pd.DataFrame()
+        # Build profile pool, tracking the depth and the matched user-category per profile.
+        # deeper match = more specific alignment with what this user cares about.
+        profiles_chunks = []
         for category in categories:
-            # Get all old paths that map to this new category
             old_paths = get_all_matching_old_paths(category)
-            
+            cat_depth = category.count(' > ') + 1
+
             # Match profiles using both new and old paths
-            # First try new path (for any newly categorized profiles)
             matching = recs[recs['tree_path'].str.contains(category, na=False, regex=False)]
-            
-            # Then match using old paths (for existing database entries)
             for old_path in old_paths:
                 old_matching = recs[recs['tree_path'].str.contains(old_path, na=False, regex=False)]
                 matching = pd.concat([matching, old_matching])
-            
-            # Remove duplicates before adding to profiles
+
             matching = matching.drop_duplicates(subset=['name', 'company_name'])
-            profiles = pd.concat([profiles, matching])
-        
-        if len(profiles) == 0:
+            if not matching.empty:
+                matching = matching.copy()
+                matching['match_depth'] = cat_depth
+                matching['matched_category'] = category  # user interest category that triggered this match
+                profiles_chunks.append(matching)
+
+        if not profiles_chunks:
             print(f"  ⚠️  No matching profiles found for {user}")
             continue
-        
-        # Extract category for grouping
+
+        profiles = pd.concat(profiles_chunks)
+        # Keep each profile's deepest match (sort desc before dedup preserves the best row)
+        profiles = profiles.sort_values('match_depth', ascending=False)
         profiles['category'] = profiles['tree_path'].apply(
             lambda x: x.split(' > ')[-2] if len(x.split(' > ')) > 1 else x
         )
-        
-        # Get top profile from each category (before ML ranking)
-        profiles = profiles.groupby('category').head(1)
-        
-        # Remove duplicates
         profiles = profiles.drop_duplicates(subset=['company_name'])
         profiles = profiles.drop_duplicates(subset=['name'])
         profiles = profiles.reset_index(drop=True)
         
-        # Use ranker-only model to rank profiles if available
+        # Merge with new_profiles to get full data for ranker (tenure already filtered globally)
+        profile_keys = profiles[['name', 'company_name']].copy()
+        profiles_full = profile_keys.merge(
+            new_profiles,
+            on=['name', 'company_name'],
+            how='left'
+        )
+        
+        # Rank profiles with model (batch inference via rank_profiles)
         if ranker_inference is not None and len(profiles) > 0:
             print(f"  Ranking {len(profiles)} profiles using ranker-only model...")
             try:
-                # Get full profile data from new_profiles for feature preparation
-                # Use name and company_name as keys to match
-                profile_keys = profiles[['name', 'company_name']].copy()
-                profiles_full = profile_keys.merge(
-                    new_profiles, 
-                    on=['name', 'company_name'], 
-                    how='left'
-                )
-                
-                # Prepare features for ML model (suppress verbose output)
-                profiles_with_features = prepare_test_features(profiles_full, verbose=False)
-                
-                # Helper function to extract features from row (same as InferenceModule)
-                def extract_features_from_row(row, metadata):
-                    """Extract features from a single row using metadata."""
-                    def flatten_embedding(embedding):
-                        """Flatten an embedding array/list into a numpy array."""
-                        if embedding is None or (isinstance(embedding, float) and np.isnan(embedding)):
-                            return np.zeros(1536, dtype=np.float32)
-                        if isinstance(embedding, (list, np.ndarray)):
-                            arr = np.array(embedding, dtype=np.float32)
-                            if arr.ndim == 1:
-                                return arr
-                            else:
-                                return arr.flatten()
-                        return np.zeros(1536, dtype=np.float32)
-                    
-                    feature_vec = []
-                    
-                    # Text embedding group 1
-                    text_emb1 = flatten_embedding(row.get('text_embedding_group1'))
-                    text_emb_dim = metadata.get('text_embedding_group1_dim', 1536)
-                    if len(text_emb1) != text_emb_dim:
-                        if len(text_emb1) < text_emb_dim:
-                            text_emb1 = np.pad(text_emb1, (0, text_emb_dim - len(text_emb1)), 'constant')
-                        else:
-                            text_emb1 = text_emb1[:text_emb_dim]
-                    feature_vec.extend(text_emb1.tolist())
-                    
-                    # Text embedding group 2
-                    text_emb2 = flatten_embedding(row.get('text_embedding_group2'))
-                    text_emb_dim2 = metadata.get('text_embedding_group2_dim', 1536)
-                    if len(text_emb2) != text_emb_dim2:
-                        if len(text_emb2) < text_emb_dim2:
-                            text_emb2 = np.pad(text_emb2, (0, text_emb_dim2 - len(text_emb2)), 'constant')
-                        else:
-                            text_emb2 = text_emb2[:text_emb_dim2]
-                    feature_vec.extend(text_emb2.tolist())
-                    
-                    # Experience embedding
-                    exp_emb = flatten_embedding(row.get('experience_embedding'))
-                    exp_emb_dim = metadata.get('experience_embedding_dim', 1536)
-                    if len(exp_emb) != exp_emb_dim:
-                        if len(exp_emb) < exp_emb_dim:
-                            exp_emb = np.pad(exp_emb, (0, exp_emb_dim - len(exp_emb)), 'constant')
-                        else:
-                            exp_emb = exp_emb[:exp_emb_dim]
-                    feature_vec.extend(exp_emb.tolist())
-                    
-                    # Numeric features
-                    for feat in metadata['numeric_features']:
-                        val = row.get(feat, 0.0)
-                        if pd.isna(val):
-                            val = 0.0
-                        feature_vec.append(float(val))
-                    
-                    # Boolean features
-                    for feat in metadata['boolean_features']:
-                        val = row.get(feat, 0)
-                        if pd.isna(val):
-                            val = 0
-                        feature_vec.append(int(val))
-                    
-                    return np.array(feature_vec, dtype=np.float32).reshape(1, -1)
-                
-                # Get ranker predictions for each profile
-                predictions = []
-                ranker = ranker_inference['ranker']
-                metadata = ranker_inference['metadata']
-                ranker_min = ranker_inference['ranker_min']
-                ranker_max = ranker_inference['ranker_max']
-                
-                for idx, row in profiles_with_features.iterrows():
-                    try:
-                        # Extract features
-                        X = extract_features_from_row(row, metadata)
-                        
-                        # Get raw ranker score
-                        raw_score = ranker.predict(X)[0]
-                        
-                        # Normalize ranker score to [0, 1] range
-                        if ranker_min is not None and ranker_max is not None and ranker_max > ranker_min:
-                            normalized_score = (raw_score - ranker_min) / (ranker_max - ranker_min)
-                            normalized_score = np.clip(normalized_score, 0.0, 1.0)
-                        else:
-                            # Fallback: sigmoid normalization
-                            normalized_score = 1.0 / (1.0 + np.exp(-raw_score))
-                        
-                        predictions.append(float(normalized_score))
-                    except Exception as e:
-                        print(f"    Warning: Error predicting for {row.get('name', 'unknown')}: {e}")
-                        predictions.append(0.0)  # Default to 0 if prediction fails
-                
-                # Add ranker_score to profiles
-                profiles['ranker_score'] = predictions
-                
-                # Sort by ranker_score (descending)
-                profiles.sort_values(by='ranker_score', ascending=False, inplace=True)
-                print(f"  Ranker ranking complete. Top score: {profiles['ranker_score'].iloc[0]:.4f}")
+                profiles_full_ranked = rank_profiles(profiles_full, ranker_inference, prepare_test_features)
+                if 'ranker_score' in profiles_full_ranked.columns:
+                    score_map = dict(zip(
+                        zip(profiles_full_ranked['name'], profiles_full_ranked['company_name']),
+                        profiles_full_ranked['ranker_score']
+                    ))
+                    profiles['ranker_score'] = profiles.apply(
+                        lambda r: score_map.get((r['name'], r['company_name']), 0.0), axis=1
+                    )
+                    profiles.sort_values(by=['ranker_score', 'match_depth'], ascending=[False, False], inplace=True)
+                    print(f"  Ranker ranking complete. Top score: {profiles['ranker_score'].iloc[0]:.4f}")
+                else:
+                    raise RuntimeError("rank_profiles returned no ranker_score")
             except Exception as e:
                 print(f"  ⚠️  Error using ranker model: {e}")
-                print("  Falling back to tree_result and past_success_indication_score sorting")
+                print("  Falling back to match_depth and past_success_indication_score sorting")
                 profiles.sort_values(
-                    by=['tree_result', 'past_success_indication_score'], 
-                    ascending=[False, False], 
+                    by=['match_depth', 'past_success_indication_score'],
+                    ascending=[False, False],
                     inplace=True
                 )
         else:
-            # Fallback: Sort by recommendation strength and success score
+            # Fallback: deeper category match first, then founder success score
             profiles.sort_values(
-                by=['tree_result', 'past_success_indication_score'], 
-                ascending=[False, False], 
+                by=['match_depth', 'past_success_indication_score'],
+                ascending=[False, False],
                 inplace=True
             )
         
@@ -774,49 +1323,108 @@ def send_extra_recs(test=True):
         all_names.extend(profiles['name'].tolist())
         companies.extend(profiles['company_name'].tolist())
         
-        # Build category string for greeting
-        categories_mentioned = profiles['tree_path'].unique()
-        category_string = ""
-        for category in categories_mentioned:
-            last_node = category.split(' > ')[-2] if len(category.split(' > ')) > 1 else category.split(' > ')[0]
-            category_string += f"{last_node}, "
-        category_string = category_string[:-2].lower()  # Remove trailing comma
+        # Build category string from the matched user-interest categories (not the profile paths).
+        # Use the last (most specific) node of each matched category, deduplicated.
+        seen_cats: set = set()
+        category_parts = []
+        for cat in profiles['matched_category']:
+            label = cat.split(' > ')[-1]
+            if label not in seen_cats:
+                seen_cats.add(label)
+                category_parts.append(label)
+        category_string = ", ".join(category_parts).lower()
         
-        # Build Slack message
+        # Build greeting and HTML body for email
         greeting_text = f"Hey {user}! I came across these profiles in {category_string} that I wanted to share with you."
         message_lines = [greeting_text]
         
         print(greeting_text)
         
         for _, row in profiles.iterrows():
-            # Format each recommendation
             line = (
                 f"• <{fix_profile_url(row['profile_url'])}|*{row['name']}*> at {fix_company_url(row['company_website'], row['company_name'])}\n"
                 f"    {row['product']}"
             )
             message_lines.append(line)
-            # Print with profile URL for easy access
             profile_link = fix_profile_url(row['profile_url'])
             score_info = f"ranker_score: {row['ranker_score']:.4f}" if 'ranker_score' in row else f"tree_result: {row['tree_result']}"
             print(f"    - {row['name']} at {row['company_name']} ({score_info})")
             print(f"      Profile: {profile_link}")
         
-        message = "\n\n".join(message_lines)
-        
+        # Exa vertical discovery for this user
+        exa_profiles_for_user = []
+        exa_vertical_for_user = None
+        if include_exa:
+            exa_vertical_for_user = _current_vertical(user)
+            if exa_vertical_for_user:
+                print(f"  Running Exa search for vertical: {exa_vertical_for_user!r}")
+                exa_profiles_for_user = get_exa_profiles_for_vertical(exa_vertical_for_user, num_results=15)
+                print(f"  Exa found {len(exa_profiles_for_user)} qualifying profiles")
+                for ep in exa_profiles_for_user:
+                    print(f"    • {ep.get('name')} @ {ep.get('company_name')}")
+
+        html_body = build_recommendation_email_html(
+            profiles, greeting_text,
+            exa_profiles=exa_profiles_for_user or None,
+            exa_vertical=exa_vertical_for_user,
+        )
+
         # Remove profiles from the pool so they're not sent to other users
         recs = recs[~recs['company_name'].isin(profiles['company_name'])]
         
-        # Send the message
-        user_id = user_map.get(user)
-        if user_id:
-            if test:
-                print("Won't send anything yet")
-            else:
-                print(f"Sending to Slack user {user_id}")
-                send_slack_dm(user_id, message)
-                time.sleep(2)  # Rate limiting
+        if test:
+            test_emails[user] = html_body
+            print("Won't send to real recipients (test=True)")
         else:
-            print(f"No Slack user ID found for {user}")
+            to_email = email_map.get(user)
+            if to_email:
+                print(f"Sending recommendation email to {user} ({to_email})")
+                sent_ok = send_recommendation_email(to_email, "Monty recommendations for you", html_body)
+                time.sleep(2)  # Rate limiting
+
+                # Only after a successful send: insert Exa profiles to DB and mark as recommended
+                if sent_ok and exa_profiles_for_user:
+                    from workflows.aviato_processing import safe_insert_profile_to_db, determine_stealth_status
+                    from services.database import get_db_connection
+                    date_str = datetime.now().strftime("%Y-%m-%d")
+                    history_value = f"recommended {user} {date_str}"
+                    inserted_profile_urls = []
+                    for ep in exa_profiles_for_user:
+                        try:
+                            ep["history"] = history_value
+                            stealth = determine_stealth_status(ep)
+                            ok = safe_insert_profile_to_db(ep, stealth=stealth)
+                            if ok:
+                                inserted_profile_urls.append(ep.get("profile_url") or ep.get("linkedin_url") or "")
+                                print(f"    Inserted Exa profile: {ep.get('name')} @ {ep.get('company_name')}")
+                            else:
+                                # Profile already exists — update history to mark as recommended
+                                conn = get_db_connection()
+                                if conn:
+                                    try:
+                                        from psycopg2 import sql as _sql
+                                        cur = conn.cursor()
+                                        profile_url = ep.get("profile_url") or ep.get("linkedin_url") or ""
+                                        for tbl in ["founders", "stealth_founders"]:
+                                            cur.execute(
+                                                _sql.SQL("UPDATE {} SET history = %s WHERE profile_url = %s").format(_sql.Identifier(tbl)),
+                                                (history_value, profile_url),
+                                            )
+                                        conn.commit()
+                                    except Exception as e:
+                                        print(f"    ⚠️  Failed to update history for existing profile: {e}")
+                                    finally:
+                                        if 'cur' in locals():
+                                            cur.close()
+                                        conn.close()
+                        except Exception as e:
+                            print(f"    ⚠️  Error inserting Exa profile {ep.get('name')}: {e}")
+            else:
+                print(f"⚠️  No email found for {user}, skipping")
+    
+    # test=True: no emails sent
+    if test:
+        print("\nTEST MODE - skipping all email sends.")
     
     # Mark all sent recommendations in the database
     if all_names or companies:
@@ -827,26 +1435,211 @@ def send_extra_recs(test=True):
             mark_prev_recs(all_names, companies)
     
     print("Recommendation sending complete!")
+    return test_emails if test else None
+
+
+def _print_exa_results_for_all():
+    """Run Exa discovery for every user, print results, and save an HTML preview."""
+    from services.tree import get_nodes_and_names
+    nodes_and_names = get_nodes_and_names(use_supabase=True)
+    users = list(nodes_and_names.keys())
+    print(f"\nRunning Exa search for {len(users)} users\n")
+
+    html_sections = []
+
+    for user in users:
+        vertical = _current_vertical(user)
+        if not vertical:
+            print(f"  {user}: no vertical configured, skipping")
+            continue
+        print(f"\n{'='*60}")
+        print(f"EXA RESULTS FOR {user.upper()}  |  vertical: {vertical!r}")
+        print("="*60)
+        profiles = get_exa_profiles_for_vertical(vertical, num_results=15)
+        if not profiles:
+            print("  No qualifying profiles found.")
+            html_sections.append(
+                f'<h2 style="font-family:sans-serif;margin-top:2em;border-bottom:1px solid #ccc">'
+                f'Exa section for {html_module.escape(user)}</h2>'
+                f'<p style="font-family:sans-serif;color:#888">No qualifying profiles found.</p>'
+            )
+            continue
+
+        for p in profiles:
+            name    = p.get("name") or "Unknown"
+            company = p.get("company_name") or "Unknown"
+            url     = fix_profile_url(p.get("profile_url") or p.get("linkedin_url") or "")
+            product = (p.get("product") or p.get("description_1") or "")[:150]
+            tree    = p.get("tree_path") or ""
+            print(f"  • {name} @ {company}")
+            print(f"    {url}")
+            if product:
+                print(f"    {product}")
+            if tree:
+                print(f"    tree: {tree}")
+
+        # Build the exact email HTML section this user would receive
+        exa_html = build_recommendation_email_html(
+            pd.DataFrame(),  # no classic recs — Exa section only
+            greeting_text="",
+            exa_profiles=profiles,
+            exa_vertical=vertical,
+        )
+        html_sections.append(
+            f'<h2 style="font-family:sans-serif;margin-top:2em;border-bottom:1px solid #ccc">'
+            f'Exa section for {html_module.escape(user)}'
+            f'<span style="font-weight:normal;font-size:0.8em;color:#888"> — {html_module.escape(vertical)}</span></h2>'
+            f'<div style="font-family:sans-serif;max-width:600px;margin:0 auto 2em">{exa_html}</div>'
+        )
+
+    # Write preview file
+    preview_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "test_exa_preview.html")
+    full_html = (
+        '<!DOCTYPE html><html><head><meta charset="utf-8">'
+        '<title>Exa preview</title></head><body>'
+        + "\n".join(html_sections)
+        + "</body></html>"
+    )
+    with open(preview_path, "w") as f:
+        f.write(full_html)
+    print(f"\nPreview saved → {preview_path}")
+
+
+def _send_exa_only(users: list):
+    """Send just the Exa discovery section as a standalone email to the given users."""
+    from services.google_client import send_html_email
+    for user in users:
+        vertical = _current_vertical(user)
+        if not vertical:
+            print(f"  {user}: no vertical configured, skipping")
+            continue
+        to_email = email_map.get(user)
+        if not to_email:
+            print(f"  {user}: no email address found, skipping")
+            continue
+        print(f"\n{user}  |  vertical: {vertical!r}")
+        profiles = get_exa_profiles_for_vertical(vertical, num_results=15)
+        if not profiles:
+            print(f"  No qualifying profiles found, skipping send for {user}")
+            continue
+        standalone_intro = (
+            f"Hey {user}, adding on to my previous message: I know you're interested in "
+            f"{vertical} so wanted to also share these profiles I just came across."
+        )
+        html_body = build_recommendation_email_html(
+            pd.DataFrame(),
+            greeting_text="",
+            exa_profiles=profiles,
+            exa_vertical=vertical,
+            exa_intro=standalone_intro,
+        )
+        result = send_html_email(to_email, "A few more profiles for you from Monty", html_body)
+        if result:
+            print(f"  ✅ Sent to {to_email}")
+            # Insert profiles to DB and mark as recommended
+            from workflows.aviato_processing import safe_insert_profile_to_db, determine_stealth_status
+            from services.database import get_db_connection
+            date_str = datetime.now().strftime("%Y-%m-%d")
+            history_value = f"recommended {user} {date_str}"
+            for ep in profiles:
+                try:
+                    ep["history"] = history_value
+                    stealth = determine_stealth_status(ep)
+                    ok = safe_insert_profile_to_db(ep, stealth=stealth)
+                    if not ok:
+                        conn = get_db_connection()
+                        if conn:
+                            try:
+                                from psycopg2 import sql as _sql
+                                cur = conn.cursor()
+                                profile_url = ep.get("profile_url") or ep.get("linkedin_url") or ""
+                                for tbl in ["founders", "stealth_founders"]:
+                                    cur.execute(
+                                        _sql.SQL("UPDATE {} SET history = %s WHERE profile_url = %s").format(_sql.Identifier(tbl)),
+                                        (history_value, profile_url),
+                                    )
+                                conn.commit()
+                            except Exception:
+                                pass
+                            finally:
+                                if 'cur' in locals():
+                                    cur.close()
+                                conn.close()
+                except Exception:
+                    pass
+        else:
+            print(f"  ❌ Failed to send to {to_email}")
 
 
 def main():
-    """Main function to send recommendations."""
-    
+    """Recommendations entrypoint.
+
+    Modes
+    -----
+    (no args)         test mode — print classic recs + Exa results for all users, no emails sent
+    send              send mode — send full emails (classic + Exa section) to all users
+    --classic         only print/run classic recommendations
+    --exa             only print Exa discovery results (no Aviato scoring, no email)
+    """
+    import argparse
+    parser = argparse.ArgumentParser(description="Monty recommendations")
+    parser.add_argument("mode", nargs="?", default="test",
+                        choices=["test", "send"],
+                        help="'send' to send emails; default is test mode (no emails)")
+    parser.add_argument("--classic", action="store_true",
+                        help="Only run classic recommendations (skip Exa)")
+    parser.add_argument("--exa", action="store_true",
+                        help="Only run and print Exa discovery results (skip classic)")
+    parser.add_argument("--exa-send", nargs="+", metavar="USER",
+                        help="Send just the Exa section email to specific users (e.g. --exa-send Todd Matt)")
+    args = parser.parse_args()
+
+    sending = args.mode == "send"
+    run_classic = not args.exa   # True unless --exa only
+    run_exa     = not args.classic  # True unless --classic only
+
     print("=" * 60)
     print("Monty Recommendations System")
+    print(f"Mode: {'SEND' if sending else 'TEST (no emails)'}")
+    if args.classic:
+        print("Scope: classic only")
+    elif args.exa:
+        print("Scope: Exa only")
     print("=" * 60)
-    
-    # Option 1: Preview recommendations for a specific user (testing)
-    ##print("\n📋 Preview Mode - Testing recommendations for Matthildur:")
-    #print("-" * 60)
-    #find_new_recs("Matthildur", test=False)
-    
-    # Option 2: Send recommendations to all users
-    # Uncomment the lines below when ready to send to everyone
-    print("\n📧 Sending recommendations to all users:")
-    print("-" * 60)
-    send_extra_recs(test=True)
-    
+
+    if args.exa_send:
+        _send_exa_only(args.exa_send)
+        return
+
+    if args.exa and not args.classic:
+        _print_exa_results_for_all()
+        return
+
+    if run_classic:
+        print("\n📧 Classic recommendations:")
+        print("-" * 60)
+        test_emails = send_extra_recs(test=not sending, include_exa=run_exa)
+
+        # In test mode, write each user's email to a preview HTML file
+        if test_emails:
+            preview_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "test_recs_preview.html")
+            sections = []
+            for user, html_body in test_emails.items():
+                sections.append(
+                    f'<h2 style="font-family:sans-serif;margin-top:2em;border-bottom:1px solid #ccc">'
+                    f'Email for {html_module.escape(user)}</h2>'
+                    f'<div style="font-family:sans-serif;max-width:600px;margin:0 auto 2em">{html_body}</div>'
+                )
+            full_html = (
+                '<!DOCTYPE html><html><head><meta charset="utf-8">'
+                '<title>Recs preview</title></head><body>'
+                + "\n".join(sections)
+                + "</body></html>"
+            )
+            with open(preview_path, "w") as f:
+                f.write(full_html)
+            print(f"\nPreview saved → {preview_path}")
+
     print("\n" + "=" * 60)
     print("✅ Done!")
     print("=" * 60)
