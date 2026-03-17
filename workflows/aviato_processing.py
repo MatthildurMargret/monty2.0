@@ -595,7 +595,12 @@ def check_founder_pedigree(profile):
     Returns:
         tuple: (passes: bool, reason: str)
     """
-    from services.openai_api import ask_monty
+    import anthropic
+
+    anthropic_key = os.getenv("ANTHROPIC_API_KEY")
+    if not anthropic_key:
+        logger.warning("ANTHROPIC_API_KEY not set — skipping pedigree check")
+        return True, "Pedigree check skipped — no API key"
 
     all_experiences = profile.get("all_experiences") or []
     if isinstance(all_experiences, str):
@@ -606,7 +611,7 @@ def check_founder_pedigree(profile):
 
     company_description = profile.get("description_1") or ""
 
-    # Build a concise experience list for the LLM — company + position only,
+    # Build a concise experience list — company + position only,
     # skip the current founding role (index == company_index)
     current_idx = profile.get("company_index", 0)
     exp_lines = []
@@ -645,25 +650,27 @@ Respond with only the JSON object, no other text."""
     data = f"Prior work history:\n{experience_text}{company_text}"
 
     try:
-        response = ask_monty(prompt, data, max_tokens=150, model="gpt-4o-mini")
-        if not response:
-            return False, "No LLM response"
+        client = anthropic.Anthropic(api_key=anthropic_key)
+        message = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=150,
+            messages=[{"role": "user", "content": f"{prompt}\n\n{data}"}]
+        )
+        response = message.content[0].text.strip()
 
         # Strip markdown code fences if present
-        cleaned = response.strip()
-        if cleaned.startswith("```"):
-            cleaned = cleaned.split("```")[1]
-            if cleaned.startswith("json"):
-                cleaned = cleaned[4:]
-        cleaned = cleaned.strip()
+        if response.startswith("```"):
+            response = response.split("```")[1]
+            if response.startswith("json"):
+                response = response[4:]
+        response = response.strip()
 
-        result = json.loads(cleaned)
+        result = json.loads(response)
         passes = bool(result.get("passes", False))
         reason = result.get("reason", "")
         return passes, reason
     except Exception as e:
         logger.debug("Pedigree check error for %s: %s", profile.get("name", "unknown"), e)
-        # On parse failure, let it through rather than silently drop
         return True, "Pedigree check failed to parse — allowed through"
 
 
