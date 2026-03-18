@@ -4,6 +4,7 @@ import time
 import json
 import hashlib
 import re
+import argparse
 from datetime import datetime, timedelta
 import pandas as pd
 from bs4 import BeautifulSoup
@@ -12,7 +13,7 @@ from dotenv import load_dotenv
 
 # Add the parent directory to the Python path so we can import modules
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from services.notion import import_tracked
+from services.notion import import_tracked, import_pipeline
 from services.deal_processing import clean_company_name, score_result
 
 # Load environment variables
@@ -175,6 +176,156 @@ def save_tracking_to_supabase(tracking_df):
     except Exception as e:
         print(f"❌ Error saving tracking to Supabase: {e}")
         return False
+
+
+def _find_tracking_rows(tracking_df, identifiers, by='company_name'):
+    """Return a boolean mask of rows matching identifiers (company_name or page_id)."""
+    if by == 'page_id':
+        if 'page_id' not in tracking_df.columns:
+            return pd.Series(False, index=tracking_df.index)
+        return tracking_df['page_id'].astype(str).isin(identifiers)
+    if 'company_name' not in tracking_df.columns:
+        return pd.Series(False, index=tracking_df.index)
+    def matches(row):
+        val = row.get('company_name')
+        if pd.isna(val):
+            return False
+        val = str(val).strip().lower()
+        return any(ident.lower() in val or val in ident.lower() for ident in identifiers)
+    return tracking_df.apply(matches, axis=1)
+
+
+def clear_latest_article(identifiers, by='company_name', dry_run=False):
+    """
+    Clear the latest article/update for matching tracking entries (they stay in tracking,
+    but won't show in the newsletter until they get a new update).
+    """
+    if not identifiers:
+        print("No identifiers provided.")
+        return 0
+    identifiers = [str(x).strip() for x in identifiers if x]
+    if not identifiers:
+        return 0
+
+    tracking_df = load_tracking_from_supabase()
+    if tracking_df.empty:
+        tracking_db_path = os.path.join(WORKSPACE_ROOT, 'data', 'tracking', 'tracking_db.csv')
+        if os.path.exists(tracking_db_path):
+            tracking_df = pd.read_csv(tracking_db_path)
+    if tracking_df.empty:
+        print("No tracking data loaded.")
+        return 0
+
+    mask = _find_tracking_rows(tracking_df, identifiers, by=by)
+    to_clear = tracking_df[mask]
+    if to_clear.empty:
+        print(f"No matching entries found for: {identifiers}")
+        return 0
+
+    page_ids = to_clear['page_id'].astype(str).tolist()
+    names = to_clear['company_name'].astype(str).tolist() if 'company_name' in to_clear.columns else []
+    print(f"Clearing latest article for {len(page_ids)} entr{'y' if len(page_ids) == 1 else 'ies'} (companies stay in tracking):")
+    for i, pid in enumerate(page_ids):
+        print(f"  - {names[i] if i < len(names) else pid}")
+    if dry_run:
+        print("(Dry run — no changes made)")
+        return len(page_ids)
+
+    for col in ['most_recent_update', 'most_recent_update_link']:
+        if col in tracking_df.columns:
+            tracking_df.loc[mask, col] = ''
+    if 'update_date' in tracking_df.columns:
+        tracking_df.loc[mask, 'update_date'] = ''
+    if 'most_recent_update_date' in tracking_df.columns:
+        tracking_df.loc[mask, 'most_recent_update_date'] = ''
+
+    supabase = get_supabase_client()
+    if supabase:
+        for _, row in to_clear.iterrows():
+            try:
+                payload = {
+                    'most_recent_update': None,
+                    'most_recent_update_link': None,
+                }
+                if 'update_date' in tracking_df.columns:
+                    payload['update_date'] = None
+                if 'most_recent_update_date' in tracking_df.columns:
+                    payload['most_recent_update_date'] = None
+                supabase.table('tracking_db').update(payload).eq('page_id', row['page_id']).execute()
+            except Exception as e:
+                print(f"  ⚠️  Failed to update page_id {row['page_id']}: {e}")
+    else:
+        print("Supabase not available; saving to CSV only.")
+
+    tracking_db_path = os.path.join(WORKSPACE_ROOT, 'data', 'tracking', 'tracking_db.csv')
+    os.makedirs(os.path.dirname(tracking_db_path), exist_ok=True)
+    tracking_df.to_csv(tracking_db_path, index=False)
+    print(f"✅ Cleared latest article for {len(page_ids)} entr{'y' if len(page_ids) == 1 else 'ies'} (saved to Supabase and CSV)")
+    return len(page_ids)
+
+
+def remove_tracking_entries(identifiers, by='company_name', dry_run=False, full_delete=False):
+    """
+    By default: clear only the latest article for matching entries (they stay in tracking).
+    With full_delete=True: permanently delete matching entries from tracking.
+    """
+    if not full_delete:
+        return clear_latest_article(identifiers, by=by, dry_run=dry_run)
+
+    if not identifiers:
+        print("No identifiers provided.")
+        return 0
+    identifiers = [str(x).strip() for x in identifiers if x]
+    if not identifiers:
+        return 0
+
+    tracking_df = load_tracking_from_supabase()
+    if tracking_df.empty:
+        tracking_db_path = os.path.join(WORKSPACE_ROOT, 'data', 'tracking', 'tracking_db.csv')
+        if os.path.exists(tracking_db_path):
+            tracking_df = pd.read_csv(tracking_db_path)
+    if tracking_df.empty:
+        print("No tracking data loaded.")
+        return 0
+
+    mask = _find_tracking_rows(tracking_df, identifiers, by=by)
+    to_remove = tracking_df[mask]
+    if to_remove.empty:
+        print(f"No matching entries found for: {identifiers}")
+        return 0
+
+    page_ids = to_remove['page_id'].astype(str).tolist()
+    names = to_remove['company_name'].astype(str).tolist() if 'company_name' in to_remove.columns else []
+    print(f"Permanently deleting {len(page_ids)} entr{'y' if len(page_ids) == 1 else 'ies'} from tracking:")
+    for i, pid in enumerate(page_ids):
+        print(f"  - page_id: {pid}" + (f"  company_name: {names[i]}" if i < len(names) else ""))
+    if dry_run:
+        print("(Dry run — no changes made)")
+        return len(page_ids)
+
+    supabase = get_supabase_client()
+    if not supabase:
+        print("Supabase not available. Saving filtered CSV only.")
+        remaining = tracking_df[~mask]
+        tracking_db_path = os.path.join(WORKSPACE_ROOT, 'data', 'tracking', 'tracking_db.csv')
+        os.makedirs(os.path.dirname(tracking_db_path), exist_ok=True)
+        remaining.to_csv(tracking_db_path, index=False)
+        print(f"Saved {len(remaining)} remaining rows to {tracking_db_path}")
+        return len(page_ids)
+
+    removed = 0
+    for pid in page_ids:
+        try:
+            supabase.table('tracking_db').delete().eq('page_id', pid).execute()
+            removed += 1
+        except Exception as e:
+            print(f"  ⚠️  Failed to delete page_id {pid}: {e}")
+    remaining = tracking_df[~mask]
+    tracking_db_path = os.path.join(WORKSPACE_ROOT, 'data', 'tracking', 'tracking_db.csv')
+    os.makedirs(os.path.dirname(tracking_db_path), exist_ok=True)
+    remaining.to_csv(tracking_db_path, index=False)
+    print(f"✅ Deleted {removed} entr{'y' if removed == 1 else 'ies'} from Supabase and updated CSV backup ({len(remaining)} remaining)")
+    return removed
 
 
 def load_processed_alerts_from_supabase():
@@ -672,7 +823,7 @@ def parse_raw_alert(email):
     return text, links
 
 def check_if_true_alert(alert):
-    from services.groq_api import get_groq_response
+    from openai import OpenAI
     
     # Extract alert text and search keywords
     alert_text = alert.get('text', '')
@@ -710,7 +861,25 @@ def check_if_true_alert(alert):
     Analyze the alert text and respond with ONLY "RELEVANT" or "IRRELEVANT" followed by a one-sentence explanation.
     """
     
-    response = get_groq_response(prompt)
+    # Get response from OpenAI using nano model (gpt-4o-mini)
+    try:
+        openai_api_key = os.getenv("OPENAI_API_KEY")
+        if not openai_api_key:
+            raise ValueError("OPENAI_API_KEY not found in environment variables")
+        
+        client = OpenAI(api_key=openai_api_key)
+        response_obj = client.chat.completions.create(
+            model="gpt-4o-mini",  # Using nano model
+            messages=[
+                {"role": "user", "content": prompt}
+            ],
+            max_tokens=200,
+            temperature=0.5
+        )
+        response = response_obj.choices[0].message.content
+    except Exception as e:
+        print(f"Error getting OpenAI response: {e}")
+        response = "Unable to process."
     
     # Parse the response to get a boolean result - only consider it relevant if it starts with "RELEVANT"
     is_relevant = response.strip().upper().startswith("RELEVANT")
@@ -1941,9 +2110,301 @@ def check_and_append_new_companies():
 
     print(f"Appended {len(enriched)} new entries to Supabase and CSV.")
     return enriched
+
+
+def search_pipeline_news():
+    """
+    Search for recent articles about pipeline companies using Parallel API.
+    Filters companies by priority (Qualifying, Low, Medium, High, Track) and
+    searches for articles published within the last 2 weeks.
+    
+    Returns:
+        pandas.DataFrame: DataFrame with articles found, or empty DataFrame if none found
+    """
+    from services.parallel_client import Parallel
+    
+    # Pipeline ID from workflows/pipeline.py
+    pipeline_id = "15e30f29-5556-4fe1-89f6-76d477a79bf8"
+    
+    print("=" * 80)
+    print("PIPELINE NEWS SEARCH")
+    print("=" * 80)
+    print()
+    
+    # Load pipeline from Notion
+    print("Loading pipeline data from Notion...")
+    try:
+        pipeline = import_pipeline(pipeline_id)
+        print(f"✓ Loaded {len(pipeline)} companies from pipeline")
+    except Exception as e:
+        print(f"❌ Error loading pipeline: {e}")
+        import traceback
+        traceback.print_exc()
+        return pd.DataFrame()
+    
+    # Filter by priority
+    priority_values = ['Qualifying', 'Low', 'Medium', 'High', 'Track']
+    filtered_pipeline = pipeline[pipeline['priority'].isin(priority_values)].copy()
+    print(f"✓ Filtered to {len(filtered_pipeline)} companies with priority: {', '.join(priority_values)}")
+    print()
+    
+    if filtered_pipeline.empty:
+        print("⚠️  No companies found with the specified priorities.")
+        return pd.DataFrame()
+    
+    # Initialize Parallel API client
+    api_key = os.getenv("PARALLEL_API_KEY")
+    if not api_key:
+        print("❌ Error: PARALLEL_API_KEY not found in environment variables")
+        return pd.DataFrame()
+    
+    parallel_client = Parallel(api_key=api_key)
+    
+    # Calculate cutoff date (2 weeks ago)
+    cutoff_date = datetime.now() - timedelta(days=14)
+    print(f"Searching for articles published after: {cutoff_date.strftime('%Y-%m-%d')}")
+    print()
+    
+    # Collect all articles
+    all_articles = []
+    companies_processed = 0
+    articles_found_total = 0
+    
+    for idx, company_row in filtered_pipeline.iterrows():
+        company_name = company_row.get('company_name', '')
+        founder = company_row.get('founder', '')
+        priority = company_row.get('priority', '')
+        
+        if not company_name or pd.isna(company_name):
+            continue
+        
+        companies_processed += 1
+        print(f"[{companies_processed}/{len(filtered_pipeline)}] Searching for: {company_name}")
+        if founder and pd.notna(founder):
+            print(f"  Founder: {founder}")
+        
+        # Build search query
+        if founder and pd.notna(founder) and str(founder).strip():
+            search_query = f"{company_name} {founder}"
+        else:
+            search_query = company_name
+        
+        # Create objective for Parallel API
+        objective = f"Find recent news articles about {company_name} published after {cutoff_date.strftime('%Y-%m-%d')}. Look for any significant updates: funding announcements, product launches, partnerships, business milestones, expansions, or other notable company news. Only return actual news articles, not company profile pages."
+        
+        try:
+            # Search using Parallel API
+            search_results = parallel_client.beta.search(
+                mode="one-shot",
+                search_queries=[search_query],
+                max_results=10,
+                objective=objective,
+                max_chars_per_result=10000
+            )
+            
+            # Parse results
+            results = []
+            if isinstance(search_results, dict):
+                if "results" in search_results:
+                    results = search_results["results"]
+                elif "data" in search_results:
+                    results = search_results["data"]
+                elif isinstance(search_results, list):
+                    results = search_results
+            
+            # Process each result
+            articles_found = 0
+            for result in results:
+                # Extract article information
+                link = None
+                title = None
+                snippet = None
+                date_str = None
+                excerpts = []
+                
+                if isinstance(result, dict):
+                    link = result.get("url") or result.get("link") or result.get("href")
+                    title = result.get("title") or result.get("name") or result.get("headline")
+                    excerpts = result.get("excerpts", [])
+                    if excerpts and isinstance(excerpts, list):
+                        snippet = " ".join(str(ex) for ex in excerpts if ex)
+                    else:
+                        snippet = result.get("snippet") or result.get("description") or result.get("text") or ""
+                    date_str = result.get("publish_date") or result.get("date") or result.get("published_date") or result.get("published")
+                
+                if not link or not title:
+                    continue
+                
+                # Parse date
+                result_date = None
+                if date_str:
+                    try:
+                        date_formats = [
+                            '%Y-%m-%d',
+                            '%Y/%m/%d',
+                            '%B %d, %Y',
+                            '%b %d, %Y',
+                            '%d %B %Y',
+                            '%d %b %Y',
+                            '%m/%d/%Y',
+                            '%Y-%m-%dT%H:%M:%S',
+                            '%Y-%m-%dT%H:%M:%SZ',
+                            '%Y-%m-%d %H:%M:%S',
+                        ]
+                        for fmt in date_formats:
+                            try:
+                                result_date = datetime.strptime(str(date_str).split()[0], fmt)
+                                break
+                            except ValueError:
+                                continue
+                        if result_date is None:
+                            result_date = pd.to_datetime(date_str).to_pydatetime()
+                    except Exception:
+                        pass
+                
+                # Filter by date (must be within last 2 weeks)
+                if result_date and result_date.date() >= cutoff_date.date():
+                    # Create summary from snippet/excerpts (limit to ~500 chars)
+                    summary = snippet if snippet else ""
+                    if len(summary) > 500:
+                        # Try to cut at sentence boundary
+                        if '.' in summary[:500]:
+                            last_period = summary[:500].rfind('.')
+                            if last_period > 300:
+                                summary = summary[:last_period + 1]
+                            else:
+                                summary = summary[:497] + "..."
+                        else:
+                            summary = summary[:497] + "..."
+                    
+                    all_articles.append({
+                        'company_name': company_name,
+                        'founder': founder if pd.notna(founder) else '',
+                        'priority': priority,
+                        'article_title': title,
+                        'article_link': link,
+                        'article_date': result_date.strftime('%Y-%m-%d') if result_date else '',
+                        'article_summary': summary
+                    })
+                    articles_found += 1
+                    articles_found_total += 1
+            
+            if articles_found > 0:
+                print(f"  ✓ Found {articles_found} article(s)")
+            else:
+                print(f"  ✗ No articles found")
+            
+        except Exception as e:
+            print(f"  ⚠️  Error searching for {company_name}: {e}")
+            import traceback
+            traceback.print_exc()
+        
+        print()
+    
+    if not all_articles:
+        print("=" * 80)
+        print("No articles found for any companies.")
+        print("=" * 80)
+        return pd.DataFrame()
+    
+    # Create DataFrame
+    articles_df = pd.DataFrame(all_articles)
+    
+    # Sort by date (most recent first)
+    articles_df['parsed_date'] = pd.to_datetime(articles_df['article_date'], errors='coerce')
+    articles_df = articles_df.sort_values('parsed_date', ascending=False, na_position='last')
+    articles_df = articles_df.drop('parsed_date', axis=1)
+    
+    # Print summary
+    print("=" * 80)
+    print(f"SUMMARY")
+    print("=" * 80)
+    print(f"Companies processed: {companies_processed}")
+    print(f"Articles found: {articles_found_total}")
+    print(f"Unique companies with articles: {articles_df['company_name'].nunique()}")
+    print()
+    
+    # Print articles
+    print("=" * 80)
+    print("ARTICLES FOUND")
+    print("=" * 80)
+    print()
+    
+    for idx, article in articles_df.iterrows():
+        print(f"Company: {article['company_name']} (Priority: {article['priority']})")
+        print(f"  Title: {article['article_title']}")
+        print(f"  Link: {article['article_link']}")
+        print(f"  Date: {article['article_date']}")
+        if article['article_summary']:
+            summary_preview = article['article_summary'][:200] + '...' if len(article['article_summary']) > 200 else article['article_summary']
+            print(f"  Summary: {summary_preview}")
+        print()
+    
+    # Save to CSV
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    output_file = os.path.join(WORKSPACE_ROOT, 'data', 'tracking', f'pipeline_news_articles_{timestamp}.csv')
+    os.makedirs(os.path.dirname(output_file), exist_ok=True)
+    
+    articles_df.to_csv(output_file, index=False)
+    print("=" * 80)
+    print(f"✓ Saved {len(articles_df)} articles to: {output_file}")
+    print("=" * 80)
+    print()
+    
+    return articles_df
     
     
 if __name__ == "__main__":
+    # Parse command-line arguments
+    parser = argparse.ArgumentParser(description='Tracking workflow for monitoring companies')
+    parser.add_argument('--pipeline-news', action='store_true', 
+                       help='Search for recent articles about pipeline companies using Parallel API')
+    parser.add_argument('--remove', nargs='+', metavar='NAME',
+                       help='Clear the latest article for these companies (they stay in tracking, won\'t show in newsletter until new update). Example: --remove "Acme Corp"')
+    parser.add_argument('--remove-by-id', nargs='+', metavar='PAGE_ID',
+                       help='Clear the latest article by page_id. Example: --remove-by-id abc123')
+    parser.add_argument('--delete', nargs='+', metavar='NAME',
+                       help='Permanently delete tracking entries by company name (substring match).')
+    parser.add_argument('--delete-by-id', nargs='+', metavar='PAGE_ID',
+                       help='Permanently delete tracking entries by page_id.')
+    parser.add_argument('--dry-run', action='store_true',
+                       help='With --remove/--delete: only show what would be changed, do not apply')
+    parser.add_argument('--list', action='store_true',
+                       help='List all tracking entries (company_name, page_id) so you can copy names/IDs for --remove')
+    args = parser.parse_args()
+    
+    if getattr(args, 'list', False):
+        tracking_df = load_tracking_from_supabase()
+        if tracking_df.empty:
+            p = os.path.join(WORKSPACE_ROOT, 'data', 'tracking', 'tracking_db.csv')
+            if os.path.exists(p):
+                tracking_df = pd.read_csv(p)
+        if tracking_df.empty:
+            print("No tracking data.")
+        else:
+            cols = [c for c in ['company_name', 'page_id'] if c in tracking_df.columns]
+            if cols:
+                print(tracking_df[cols].to_string(index=False))
+            else:
+                print(tracking_df.head(20).to_string())
+        sys.exit(0)
+    
+    if args.remove or args.remove_by_id:
+        by = 'company_name' if args.remove else 'page_id'
+        ids = args.remove if args.remove else (args.remove_by_id or [])
+        remove_tracking_entries(ids, by=by, dry_run=bool(args.dry_run), full_delete=False)
+        sys.exit(0)
+    if args.delete or args.delete_by_id:
+        by = 'company_name' if args.delete else 'page_id'
+        ids = args.delete if args.delete else (args.delete_by_id or [])
+        remove_tracking_entries(ids, by=by, dry_run=bool(args.dry_run), full_delete=True)
+        sys.exit(0)
+    
+    # If --pipeline-news flag is set, run pipeline news search instead of regular tracking
+    if args.pipeline_news:
+        search_pipeline_news()
+        sys.exit(0)
+    
     # Step 1: Load tracking database from Supabase (with CSV fallback)
     tracking_df = load_tracking_from_supabase()
     

@@ -166,11 +166,18 @@ def parse_raw_email(email):
 
     msg = BytesParser(policy=policy.default).parsebytes(email['raw_email'])
     text_content = ""
+    html_content = ""
     if msg.is_multipart():
         for part in msg.walk():
-            if part.get_content_type() == 'text/plain':
+            ct = part.get_content_type()
+            if ct == 'text/plain':
                 text_content = part.get_content()
                 break
+            elif ct == 'text/html' and not html_content:
+                html_content = part.get_content()
+        # Fallback to HTML if no text/plain (many newsletters are HTML-only)
+        if not text_content and html_content:
+            text_content = html_content
     else:
         text_content = msg.get_content()
 

@@ -495,7 +495,7 @@ def updated_newsletter_deals(days_back=6):
     except FileNotFoundError:
         processed_emails = pd.DataFrame(columns=["Email_ID"])
 
-    start_date = (datetime.now() - timedelta(days=days_back)).strftime('%Y-%m-%d')
+    start_date = (datetime.now() - timedelta(days=days_back)).strftime('%Y/%m/%d')
     emails = get_emails_with_label(start_date, label_name="deals", raw_format=True)
     
     all_deals = []
@@ -1095,11 +1095,11 @@ def reprocess_emails(sources=None, days_back=7):
         days_back (int): Number of days to look back for emails
     """
     if sources is None:
-        sources = ["VC News Daily", "Term Sheet | Fortune", "Fresh Funding & Products"]
+        sources = ["VC News Daily", "Term Sheet | Fortune", "Fresh Funding & Products", "Venture Daily Digest"]
     
     print(f"Reprocessing emails from sources: {sources}")
     
-    start_date = (datetime.now() - timedelta(days=days_back)).strftime('%Y-%m-%d')
+    start_date = (datetime.now() - timedelta(days=days_back)).strftime('%Y/%m/%d')
     emails = get_emails_with_label(start_date, label_name="deals", raw_format=True)
     
     all_deals = []
@@ -1120,7 +1120,9 @@ def reprocess_emails(sources=None, days_back=7):
         print(f"Reprocessing: {email_source}")
         email_text = parse_raw_email(email)
         
-        if "VC News Daily" in email_source:
+        if "Venture Daily Digest" in email_source:
+            deals = process_daily_digest(email_text)
+        elif "VC News Daily" in email_source:
             deals = process_vcnewsdaily(email_text)
         elif "Term Sheet | Fortune" in email_source:
             deals = process_fortune_termsheet(email_text)
@@ -1279,10 +1281,21 @@ def process_recent_early_deals(days_back=6):
 if __name__ == "__main__":
     import sys
     
-    # Check if we should only process recent early deals
+    # Check for different modes
     if len(sys.argv) > 1 and sys.argv[1] == "--recent-only":
         days_back = int(sys.argv[2]) if len(sys.argv) > 2 else 6
         process_recent_early_deals(days_back=days_back)
+    elif len(sys.argv) > 1 and sys.argv[1] == "--reprocess":
+        # Reprocess emails from past week (7 days) ignoring processed_emails check
+        days_back = int(sys.argv[2]) if len(sys.argv) > 2 else 7
+        print(f"🔄 Reprocessing emails from the past {days_back} days...")
+        deals_df = reprocess_emails(sources=None, days_back=days_back)
+        
+        # Also find early stage deals from reprocessed deals
+        if deals_df is not None and not deals_df.empty:
+            early_stage_deals = find_early_stage_deals(deals_df)
+            if early_stage_deals is not None and not early_stage_deals.empty:
+                add_deals_to_database(early_stage_deals, days_back=days_back)
     else:
         # Run the regular workflow
         days_back = 6

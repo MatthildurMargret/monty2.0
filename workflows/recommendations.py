@@ -394,6 +394,67 @@ def filter_categories_by_tree_path(categories, user):
     return filtered
 
 
+def _select_top_with_pedigree(profiles_ranked, new_profiles, target=3):
+    """Iterate ranked profiles top-down, running pedigree check on each.
+    Returns (selected_df, pedigree_results) where pedigree_results is a list
+    of (profile_url, passes, reason) for every profile checked."""
+    from workflows.aviato_processing import check_founder_pedigree
+    selected_rows = []
+    pedigree_results = []
+    for _, row in profiles_ranked.iterrows():
+        if len(selected_rows) >= target:
+            break
+        profile_url = row.get('profile_url')
+        full_match = new_profiles[new_profiles['profile_url'] == profile_url]
+        profile_data = full_match.iloc[0].to_dict() if not full_match.empty else row.to_dict()
+        passes, reason = check_founder_pedigree(profile_data)
+        pedigree_results.append((profile_url, passes, reason))
+        if passes:
+            print(f"  Pedigree passed for {row.get('name', 'unknown')}: {reason}")
+            selected_rows.append(row)
+        else:
+            print(f"  Pedigree check failed for {row.get('name', 'unknown')}: {reason}")
+    result = pd.DataFrame(selected_rows) if selected_rows else pd.DataFrame(columns=profiles_ranked.columns)
+    return result, pedigree_results
+
+
+def _save_pedigree_results(pedigree_results):
+    """Persist pedigree check results to DB (both passes and failures).
+    Failures also get history = 'pedigree_fail' to exclude from future queries."""
+    if not pedigree_results:
+        return
+    from services.database import get_db_connection
+    conn = get_db_connection()
+    if not conn:
+        return
+    try:
+        cur = conn.cursor()
+        failed = 0
+        passed = 0
+        for url, passes, reason in pedigree_results:
+            cur.execute(
+                "UPDATE founders SET pedigree_passes = %s, pedigree_reason = %s WHERE profile_url = %s",
+                (passes, reason, url)
+            )
+            if not passes:
+                cur.execute(
+                    "UPDATE founders SET history = 'pedigree_fail' WHERE profile_url = %s AND history = ''",
+                    (url,)
+                )
+                failed += 1
+            else:
+                passed += 1
+        conn.commit()
+        print(f"  Saved pedigree results: {passed} passed, {failed} failed")
+    except Exception as e:
+        print(f"  ⚠️  Error saving pedigree results: {e}")
+        conn.rollback()
+    finally:
+        if 'cur' in locals():
+            cur.close()
+        conn.close()
+
+
 def find_new_recs(username, test=True, return_html_only=False):
     """Find new recommendations for a specific user (for testing/preview purposes).
 
@@ -519,8 +580,9 @@ def find_new_recs(username, test=True, return_html_only=False):
                 ascending=[False, False], inplace=True
             )
 
-        # Take top 3
-        profiles = profiles.head(3)
+        # Take top 3 (with iterative pedigree check)
+        profiles, pedigree_results = _select_top_with_pedigree(profiles, new_profiles, target=3)
+        _save_pedigree_results(pedigree_results)
 
         if not return_html_only:
             print(f"Found {len(profiles)} recommendations:\n")
@@ -694,7 +756,7 @@ def get_exa_profiles_for_vertical(vertical: str, num_results: int = 10) -> list:
         print("  ⚠️  EXA_API_KEY not set — skipping Exa search")
         return []
 
-    from workflows.aviato_processing import get_linkedin_id, enrich_profile, map_aviato_to_schema, monty_enrich_profile
+    from workflows.aviato_processing import get_linkedin_id, enrich_profile, map_aviato_to_schema, monty_enrich_profile, check_founder_pedigree
     from services.database import clean_linkedin_url
 
     query = f"Founders of {vertical} startups that were founded within the last 2 years in the US"
@@ -746,6 +808,10 @@ def get_exa_profiles_for_vertical(vertical: str, num_results: int = 10) -> list:
         if not keep:
             continue
         mapped = monty_enrich_profile(mapped)
+        passes, reason = check_founder_pedigree(mapped)
+        if not passes:
+            print(f"  ⚠️  Exa profile failed pedigree check: {reason}")
+            continue
         mapped["access_date"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         mapped = _run_exa_pipeline(mapped)
         enriched.append(mapped)
@@ -1083,6 +1149,16 @@ def _fetch_and_filter_founders():
     if filtered_count > 0:
         print(f"Filtered out {filtered_count} non-founder 'founding' roles (remaining: {len(new_profiles)})")
 
+    # Filter out founders estimated to be over 40 (inferred from earliest experience start date)
+    from workflows.aviato_processing import estimate_founder_age
+    initial_count = len(new_profiles)
+    new_profiles = new_profiles[
+        new_profiles.apply(lambda r: (estimate_founder_age(r.to_dict()) or 0) <= 40, axis=1)
+    ].copy()
+    filtered_count = initial_count - len(new_profiles)
+    if filtered_count > 0:
+        print(f"Filtered out {filtered_count} founders estimated over 40 (remaining: {len(new_profiles)})")
+
     new_profiles = new_profiles.drop_duplicates(subset=['company_name'])
     new_profiles = new_profiles.drop_duplicates(subset=['name'])
     new_profiles = new_profiles.drop_duplicates(subset=['profile_url'])
@@ -1317,9 +1393,10 @@ def send_extra_recs(test=True, include_exa=True):
                 inplace=True
             )
         
-        # Take top 3 recommendations
-        profiles = profiles.head(3)
-        
+        # Take top 3 recommendations (with iterative pedigree check)
+        profiles, pedigree_results = _select_top_with_pedigree(profiles, new_profiles, target=3)
+        _save_pedigree_results(pedigree_results)
+
         if len(profiles) == 0:
             print(f"No profiles left after filtering for {user}")
             continue

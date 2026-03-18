@@ -713,7 +713,7 @@ def extract_info_from_website(website_url, company_description=None):
                 # Add a small delay to avoid overwhelming the server
                 time.sleep(1)
             except Exception as e:
-                print(f"Error extracting content from {link}: {e}")
+                pass  # silently skip failed URLs
                 continue
         
         # Add LinkedIn company description if available

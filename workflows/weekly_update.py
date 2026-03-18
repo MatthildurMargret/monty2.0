@@ -130,6 +130,58 @@ def _filter_tracking_updates(df, days=5):
     return new_updates.drop_duplicates(subset='company_name', keep='first')
 
 
+def _filter_irrelevant_tracking_updates(df):
+    """Use LLM to verify each tracking update is (1) actually about the tracked
+    company and (2) a substantive business signal worth surfacing in the newsletter.
+    Entries that fail either check are dropped silently (with a console note).
+    On any error the entry is kept, so this is a best-effort filter.
+    """
+    if df.empty:
+        return df
+
+    try:
+        from services.openai_api import ask_monty
+    except ImportError:
+        return df
+
+    keep = []
+    for _, row in df.iterrows():
+        company = str(row.get('company_name') or '').strip()
+        update  = str(row.get('most_recent_update') or '').strip()
+
+        if not company or not update:
+            keep.append(True)
+            continue
+
+        prompt = (
+            "You are filtering a VC firm's weekly portfolio news feed. "
+            "Given a tracked company name and a news update summary, return a JSON object with:\n"
+            '- "relevant": true if the update is clearly about this specific company. '
+            'Relevant signals include: funding, product launch, key hire, partnership, '
+            'acquisition, regulatory milestone, or job postings FROM this specific company '
+            '(hiring is a signal of growth). false only if the article is about a completely '
+            'different company that happens to share a similar name, or is a generic industry '
+            'article with no mention of this company.\n'
+            '- "reason": one short sentence\n'
+            "Return only the JSON object, no other text."
+        )
+        data = f"Company: {company}\n\nUpdate:\n{update[:1500]}"
+
+        try:
+            response = ask_monty(prompt, data, max_tokens=80)
+            parsed = json.loads(response.strip())
+            if parsed.get('relevant') is False:
+                print(f"  ✗ Tracking update filtered for {company}: {parsed.get('reason', '')}")
+                keep.append(False)
+            else:
+                keep.append(True)
+        except Exception as e:
+            print(f"  ⚠️  Could not verify tracking update for {company}: {e} — keeping")
+            keep.append(True)
+
+    return df[keep].reset_index(drop=True)
+
+
 def get_tracking():
     """Get tracking updates from Supabase (with CSV fallback).
 
@@ -152,7 +204,9 @@ def get_tracking():
         try:
             df = load_tracking_from_supabase()
             if not df.empty:
-                return _filter_tracking_updates(df)
+                filtered = _filter_tracking_updates(df)
+                print(f"  Running LLM relevance check on {len(filtered)} tracking entries...")
+                return _filter_irrelevant_tracking_updates(filtered)
         except Exception as e:
             print(f"⚠️  Error loading from Supabase: {e}, falling back to CSV")
 
@@ -172,7 +226,9 @@ def get_tracking():
     if df.empty:
         return pd.DataFrame()
 
-    return _filter_tracking_updates(df)
+    filtered = _filter_tracking_updates(df)
+    print(f"  Running LLM relevance check on {len(filtered)} tracking entries...")
+    return _filter_irrelevant_tracking_updates(filtered)
 
 # Load the investment tree root node
 def get_pipeline_stats(filter_date=None):
@@ -500,6 +556,72 @@ def fetch_pipeline_companies():
         return pd.DataFrame()
 
 
+def _pick_top_founder_with_pedigree(ranked_df, full_founders_df):
+    """Iterate ranked founders top-down, run pedigree check, return first that passes.
+
+    Returns:
+        tuple: (founder_dict or None, list of (profile_url, passes, reason))
+    """
+    from workflows.aviato_processing import check_founder_pedigree
+    pedigree_results = []
+    for _, row in ranked_df.iterrows():
+        profile_url = row.get('profile_url')
+        # Use full row data for pedigree (ranked df may have fewer columns)
+        if profile_url and not full_founders_df.empty and 'profile_url' in full_founders_df.columns:
+            match = full_founders_df[full_founders_df['profile_url'] == profile_url]
+            profile_data = match.iloc[0].to_dict() if not match.empty else row.to_dict()
+        else:
+            profile_data = row.to_dict()
+
+        passes, reason = check_founder_pedigree(profile_data)
+        pedigree_results.append((profile_url, passes, reason))
+        if passes:
+            print(f"    Pedigree passed for {row.get('name', 'unknown')}: {reason}")
+            return row.to_dict(), pedigree_results
+        else:
+            print(f"    Pedigree failed for {row.get('name', 'unknown')}: {reason}")
+
+    # None passed — return the top-ranked one anyway so the newsletter isn't empty,
+    # but still persist the pedigree results so failures are recorded.
+    print("    ⚠️  No founder passed pedigree check — using top-ranked as fallback")
+    return ranked_df.iloc[0].to_dict() if not ranked_df.empty else None, pedigree_results
+
+
+def _save_weekly_pedigree_results(pedigree_results):
+    """Persist pedigree check results to the founders table."""
+    if not pedigree_results:
+        return
+    from services.database import get_db_connection
+    conn = get_db_connection()
+    if not conn:
+        return
+    try:
+        cur = conn.cursor()
+        for url, passes, reason in pedigree_results:
+            if not url:
+                continue
+            cur.execute(
+                "UPDATE founders SET pedigree_passes = %s, pedigree_reason = %s WHERE profile_url = %s",
+                (passes, reason, url)
+            )
+            if not passes:
+                cur.execute(
+                    "UPDATE founders SET history = 'pedigree_fail' WHERE profile_url = %s AND history = ''",
+                    (url,)
+                )
+        conn.commit()
+        passed = sum(1 for _, p, _ in pedigree_results if p)
+        failed = len(pedigree_results) - passed
+        print(f"    Saved pedigree results: {passed} passed, {failed} failed")
+    except Exception as e:
+        print(f"    ⚠️  Error saving pedigree results: {e}")
+        conn.rollback()
+    finally:
+        if 'cur' in locals():
+            cur.close()
+        conn.close()
+
+
 def get_recs():
     with open('data/taste_tree.json', 'r') as f:
         tree = json.load(f)
@@ -578,6 +700,16 @@ def get_recs():
                 else:
                     print("    ⚠️  'building_since' column not found, skipping age filter")
 
+                # Filter out founders estimated to be over 40
+                from workflows.aviato_processing import estimate_founder_age
+                before = len(all_founders_df)
+                all_founders_df = all_founders_df[
+                    all_founders_df.apply(lambda r: (estimate_founder_age(r.to_dict()) or 0) <= 40, axis=1)
+                ].reset_index(drop=True)
+                filtered_count = before - len(all_founders_df)
+                if filtered_count > 0:
+                    print(f"    Filtered out {filtered_count} founders estimated over 40 (remaining: {len(all_founders_df)})")
+
                 if all_founders_df.empty:
                     sub['top_founder'] = None
                     continue
@@ -585,27 +717,25 @@ def get_recs():
                 print(f"    Found {len(all_founders_df)} founders")
 
                 # --------------------------------------------------
-                # Rank with model (or fallback)
+                # Rank with model (or fallback), then pedigree check
                 # --------------------------------------------------
                 if ranker_inference is not None:
                     ranked = rank_profiles(all_founders_df, ranker_inference, prepare_test_features)
-                    if 'ranker_score' in ranked.columns:
-                        top_founder = ranked.iloc[0].to_dict()
-                        sub['top_founder'] = top_founder
-                        print(
-                            f"    Selected top founder "
-                            f"(ranker_score={top_founder.get('ranker_score', 0):.4f})"
-                        )
-                    else:
-                        all_founders_df.sort_values(
-                            by='past_success_indication_score', ascending=False, inplace=True
-                        )
-                        sub['top_founder'] = all_founders_df.iloc[0].to_dict()
+                    if 'ranker_score' not in ranked.columns:
+                        ranked = all_founders_df.sort_values(
+                            by='past_success_indication_score', ascending=False
+                        ).reset_index(drop=True)
                 else:
-                    all_founders_df.sort_values(
-                        by='past_success_indication_score', ascending=False, inplace=True
-                    )
-                    sub['top_founder'] = all_founders_df.iloc[0].to_dict()
+                    ranked = all_founders_df.sort_values(
+                        by='past_success_indication_score', ascending=False
+                    ).reset_index(drop=True)
+
+                top_founder, pedigree_results = _pick_top_founder_with_pedigree(ranked, all_founders_df)
+                _save_weekly_pedigree_results(pedigree_results)
+                sub['top_founder'] = top_founder
+                if top_founder:
+                    score = top_founder.get('ranker_score') or top_founder.get('past_success_indication_score', 0)
+                    print(f"    Selected top founder: {top_founder.get('name', 'unknown')} (score={score:.4f})")
 
                 # --------------------------------------------------
                 # Deal activity + interest
@@ -757,7 +887,7 @@ def generate_greeting_with_openai(fallback=None):
 
 
 # Load the tree for deal lookups
-def main():
+def main(no_send=False):
     from services.weekly_formatting import generate_html
     from services.google_client import send_email
     
@@ -808,20 +938,28 @@ def main():
     print(f"\n✅ Weekly update generated successfully!")
     print(f"📄 Saved to: {output_path}")
 
-    # Send email
-    send_email(html_output)
+    # Send email (skipped in dry-run mode)
+    if no_send:
+        print("\n⏭  --no-send: skipping email send and marking steps")
+    else:
+        send_email(html_output)
 
-    # Mark recommended founders/companies to avoid repeats
-    mark_as_recommended(recs)
-    
-    # Mark recommended profiles to avoid repeats
-    if profile_ids:
-        mark_profiles_as_recommended(profile_ids)
-        print(f"Marked {len(profile_ids)} profiles as recommended")
+        # Mark recommended founders/companies to avoid repeats
+        mark_as_recommended(recs)
+
+        # Mark recommended profiles to avoid repeats
+        if profile_ids:
+            mark_profiles_as_recommended(profile_ids)
+            print(f"Marked {len(profile_ids)} profiles as recommended")
     
     return html_output
 
 
 if __name__ == "__main__":
-    main()
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--no-send", action="store_true",
+                        help="Generate HTML but skip sending the email and marking recommendations")
+    args = parser.parse_args()
+    main(no_send=args.no_send)
 

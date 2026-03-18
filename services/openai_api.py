@@ -10,19 +10,114 @@ load_dotenv()
 # Get OpenAI API key from environment variables
 openai_api_key = os.getenv("OPENAI_API_KEY")
 
-def ask_monty(prompt, data, max_tokens=1000):
+def ask_monty(prompt, data, max_tokens=1000, model=None):
+    """
+    Call OpenAI chat completion.
+
+    Args:
+        prompt: System message / instructions.
+        data: User message / input data.
+        max_tokens: Maximum tokens in the response.
+        model: Model name (e.g. 'gpt-4o', 'gpt-4o-mini'). If None, uses gpt-4o-mini.
+    """
+    if model is None:
+        model = "gpt-4o-mini"
     client = OpenAI(api_key=openai_api_key)
-    # Use the new API to interact with the ChatCompletion model
     response = client.chat.completions.create(
-        model="gpt-4o-mini",  # Ensure the correct model is specified
+        model=model,
         messages=[
             {"role": "system", "content": prompt},
             {"role": "user", "content": data}
         ],
-        max_tokens=max_tokens,
-        temperature=0.5
+        max_completion_tokens=max_tokens,
     )
     return response.choices[0].message.content
+
+
+def generate_talent_description(all_experiences, person_name, max_tokens: int = 150) -> str:
+    """
+    Generate a personalized description for a talent recommendation based on their experience.
+    
+    Analyzes all_experiences to identify the company they founded and their background,
+    then generates a short 1-2 sentence description about what type of company they built
+    and their relevant experience.
+    
+    Args:
+        all_experiences: List of experience dictionaries, each with:
+            - company_name: str
+            - position: str
+            - start_date: str (optional)
+            - end_date: str (optional, None if current)
+            - description: str (optional)
+        person_name: Name of the person (for context)
+        max_tokens: Max tokens for the model output.
+    
+    Returns:
+        A short string (1-2 sentences, max ~60 words) describing their background and company.
+    """
+    import json
+    
+    # Guard rails
+    if not all_experiences or not isinstance(all_experiences, list) or len(all_experiences) == 0:
+        return None
+    
+    # Format experiences for the prompt
+    experiences_text = []
+    for exp in all_experiences:
+        company = exp.get("company_name", "Unknown Company")
+        position = exp.get("position", "")
+        start_date = exp.get("start_date", "")
+        end_date = exp.get("end_date")
+        description = exp.get("description", "")
+        
+        # Build experience line
+        exp_line = f"- {position} at {company}"
+        if start_date:
+            exp_line += f" ({start_date}"
+            if end_date:
+                exp_line += f" - {end_date})"
+            else:
+                exp_line += " - present)"
+        if description:
+            exp_line += f": {description[:200]}"  # Truncate long descriptions
+        
+        experiences_text.append(exp_line)
+    
+    experiences_str = "\n".join(experiences_text)
+    
+    prompt = (
+        "You are a concise VC investment analyst at Montage Ventures writing a weekly newsletter. "
+        "Analyze the person's work experience below and generate a short, straightforward description (1-2 sentences, max ~60 words) "
+        "that describes their background and why they might be an interesting founder candidate.\n\n"
+        "REQUIREMENTS:\n"
+        "1. If they are a founder: Describe what type of company they founded/built (be specific: 'a B2B payments API', 'a telehealth platform for mental health', 'a DTC skincare brand')\n"
+        "2. Describe their prior experience at specific companies (e.g., 'previously led product at Stripe', 'ex-Google engineer', 'worked on payments infrastructure at Square')\n"
+        "3. Mention relevant education if notable (e.g., 'Stanford CS graduate', 'MIT MBA')\n\n"
+        "CRITICAL - AVOID THESE GENERIC PHRASES:\n"
+        "- 'showcasing expertise in...'\n"
+        "- 'brings a wealth of...'\n"
+        "- 'demonstrates strong...'\n"
+        "- 'innovative tech solutions'\n"
+        "- 'technical expertise and leadership skills'\n"
+        "- 'proven track record' (unless you can be specific)\n"
+        "- Any vague or marketing-style language\n\n"
+        "INSTEAD, be direct and factual:\n"
+        "- 'Founded [Company], a [specific type of business] that [what it does]'\n"
+        "- 'Previously [specific role] at [Company] where [specific achievement/area]'\n"
+        "- 'Built [specific product/feature] at [Company]'\n"
+        "- 'Serial entrepreneur with exits in [specific industries]'\n\n"
+        "Write in a natural, straightforward tone. Focus on concrete facts about their ventures, work history, and education. "
+        "Do not include headings, bullet points, or the person's name in the description."
+    )
+    
+    data = f"Person: {person_name}\n\nWork Experience:\n{experiences_str}"
+    
+    try:
+        description = ask_monty(prompt, data, max_tokens=max_tokens)
+        return (description or "").strip()
+    except Exception as e:
+        print(f"Error generating talent description: {e}")
+        return None
 
 
 def summarize_company_recommendation(interest: str,
@@ -353,3 +448,347 @@ def parse_output(output):
 
     # Default empty if nothing found
     return {"link": ""}
+
+
+def fetch_article_content(url, company_name, max_chars=2000):
+    """
+    Fetch article content from a URL using Parallel API extract.
+    
+    Args:
+        url: URL to extract content from
+        company_name: Name of the company (for context)
+        max_chars: Maximum characters to return (truncated)
+    
+    Returns:
+        str: Article content excerpt, or empty string if extraction fails
+    """
+    import os
+    
+    try:
+        api_key = os.getenv("PARALLEL_API_KEY")
+        if not api_key:
+            return ""
+        
+        from services.parallel_client import Parallel
+        
+        parallel_client = Parallel(api_key=api_key)
+        
+        # Use a highly specific objective to extract only the main article content
+        # about the funding announcement, excluding navigation, headers, footers, and UI elements
+        objective = f"""Extract ONLY the main article content about {company_name}'s funding announcement. 
+        
+        INCLUDE:
+        - The main article body text about the funding round
+        - What the company does (specific product/service description)
+        - Funding amount and round type
+        - Key investors mentioned
+        - Business model details or market context
+        - Quotes from founders or investors about the funding
+        
+        EXCLUDE:
+        - Navigation menus, headers, footers
+        - Login prompts, sign-up forms
+        - Related articles links, sidebar content
+        - Social media sharing buttons
+        - Website navigation elements
+        - Cookie notices, privacy policy links
+        - Any UI elements or page structure
+        
+        Extract only the core article text that describes the funding announcement and the company."""
+        
+        # Use search queries to further focus on funding-related content
+        search_queries = [
+            f"{company_name} funding",
+            "raised",
+            "investors",
+            "round"
+        ]
+        
+        extract_result = parallel_client.beta.extract(
+            urls=[url],
+            objective=objective,
+            search_queries=search_queries,
+            excerpts=True,
+            full_content=False
+        )
+        
+        # Check if extraction was successful
+        if extract_result.results and len(extract_result.results) > 0:
+            result = extract_result.results[0]
+            
+            # Extract excerpts from response
+            excerpts = []
+            if isinstance(result, dict):
+                excerpts = result.get('excerpts', [])
+            elif hasattr(result, 'excerpts'):
+                excerpts = result.excerpts
+            
+            # Combine excerpts into text
+            if excerpts and isinstance(excerpts, list) and len(excerpts) > 0:
+                text_content = ' '.join(str(ex) for ex in excerpts if ex)
+                
+                if text_content and len(text_content.strip()) > 50:
+                    # Truncate to max_chars to keep context window manageable
+                    return text_content[:max_chars].strip()
+        
+        return ""
+    except Exception as e:
+        print(f"  ⚠️  Error extracting article content for {company_name}: {e}")
+        return ""
+
+
+def synthesize_deals(deals_df, max_tokens=1500, fetch_articles=True):
+    """
+    Synthesize recent deals into 1-3 key insights using OpenAI.
+    
+    Args:
+        deals_df: pandas DataFrame with columns: Company, Amount, Funding Round, Vertical, Category, Link, Investors
+        max_tokens: Maximum tokens for the response
+        fetch_articles: Whether to fetch article content from links (default: True)
+    
+    Returns:
+        list: List of insight dictionaries, each with:
+            - 'pattern': str - The pattern/trend description
+            - 'companies': list - List of company names mentioned
+            - 'my_take': str - The "My take" analysis
+            - 'company_links': dict - Mapping of company names to their article links
+    """
+    import pandas as pd
+    import ast
+    import re
+    
+    if deals_df is None or deals_df.empty:
+        return []
+    
+    # Use all deals (no category filtering)
+    filtered_deals = deals_df.copy()
+    
+    # Format deals data for the prompt
+    deals_text = []
+    company_link_map = {}
+    
+    if fetch_articles:
+        print(f"  Fetching article content for {len(filtered_deals)} deals...")
+    
+    for idx, row in filtered_deals.iterrows():
+        company = str(row.get("Company", "")).strip()
+        amount = str(row.get("Amount", "")).strip() if pd.notna(row.get("Amount")) else "unknown"
+        funding_round = str(row.get("Funding Round", "")).strip() if pd.notna(row.get("Funding Round")) else ""
+        vertical = str(row.get("Vertical", "")).strip() if pd.notna(row.get("Vertical")) else ""
+        category = str(row.get("Category", "")).strip() if pd.notna(row.get("Category")) else ""
+        link = str(row.get("Link", "")).strip() if pd.notna(row.get("Link")) and str(row.get("Link")) != "No link found" else ""
+        
+        # Parse investors
+        investors_raw = row.get("Investors", "")
+        investors = ""
+        if pd.notna(investors_raw) and str(investors_raw).strip() and str(investors_raw).lower() not in ["undisclosed", "unknown", "nan", ""]:
+            investors_str = str(investors_raw).strip()
+            # Try to parse as Python list
+            try:
+                if investors_str.startswith('[') and investors_str.endswith(']'):
+                    investors_list = ast.literal_eval(investors_str)
+                    investors = ', '.join(str(inv) for inv in investors_list)
+                else:
+                    # Clean up list formatting if present
+                    investors = re.sub(r"[\[\]']", "", investors_str)
+                    investors = re.sub(r',\s*', ', ', investors)
+            except:
+                investors = investors_str
+        
+        if company:
+            # Fetch article content if requested and link is available
+            article_content = ""
+            if fetch_articles and link:
+                try:
+                    article_content = fetch_article_content(link, company, max_chars=1500)
+                    if article_content:
+                        print(f"    ✓ Fetched content for {company}")
+                    else:
+                        print(f"    ⚠️  No content extracted for {company}")
+                except Exception as e:
+                    print(f"    ⚠️  Error fetching content for {company}: {e}")
+                    article_content = ""
+            
+            # Build deal description
+            deal_desc = f"- {company}: {amount} in {funding_round} ({vertical}) - Category: {category}"
+            if investors:
+                deal_desc += f" - Investors: {investors}"
+            if article_content:
+                deal_desc += f"\n  Article excerpt: {article_content}"
+            
+            deals_text.append(deal_desc)
+            if link:
+                company_link_map[company] = link
+    
+    if not deals_text:
+        return []
+    
+    deals_list = "\n".join(deals_text)
+    
+    prompt = """You are a VC investment analyst at Montage Ventures writing a weekly newsletter. 
+Analyze ALL the recent deals below and identify 1-3 meaningful themes or patterns that span MULTIPLE deals.
+
+CRITICAL REQUIREMENTS:
+- Each insight MUST be based on MULTIPLE deals (at least 2-3 companies). A single deal does not indicate a trend.
+- Look for patterns that appear across multiple companies, not isolated cases.
+- If you can find relevance to Commerce, Fintech, or Healthcare categories, prioritize those, but insights can span any categories.
+- Only create insights if you can identify genuine patterns across multiple deals. It's better to have 1-2 strong insights than 3 weak ones.
+
+AVOID VAGUE LANGUAGE - BE SPECIFIC:
+- DO NOT use vague terms like: "AI-driven solutions", "AI technologies", "digital transformation", "innovative platforms", "tech-enabled services"
+- DO NOT create insights about broad categories like "the rise of AI" or "automation trends"
+- INSTEAD, focus on SPECIFIC use cases, verticals, business models, or market dynamics
+
+GOOD INSIGHT EXAMPLES:
+- "Seed rounds for autonomous shopping agents in Commerce (Homie, Claybird) - companies building agents that execute purchases, not just recommend"
+- "Healthcare administration tools targeting prior authorization workflows (Taxo, Marit Health) - addressing specific pain points in provider operations"
+- "B2B pricing infrastructure for SaaS companies (Dealops, [Company2]) - embedded pricing engines that integrate into sales workflows"
+
+BAD INSIGHT EXAMPLES (too vague):
+- "The rise of AI-driven solutions across diverse sectors"
+- "Companies leveraging AI technologies"
+- "Digital transformation in various industries"
+
+Focus on:
+- SPECIFIC verticals or use cases (e.g., "autonomous shopping agents", "prior authorization workflows", "pricing infrastructure")
+- SPECIFIC business models or go-to-market approaches
+- SPECIFIC market dynamics or pain points being addressed
+- Common funding round patterns (e.g., "Seed rounds for X" or "Series Seed for Y")
+- Concrete patterns in how companies are solving problems, not abstract technology trends
+
+Use the article excerpts provided to understand what each company actually does. The excerpts contain more detailed information than the brief vertical descriptions - use this to identify specific use cases and business models.
+
+For each insight (1-3 total), provide:
+1. The pattern/trend you're observing (must be SPECIFIC and apply to multiple deals - avoid vague generalizations)
+2. 2-4 example companies that illustrate this pattern (use exact company names from the list)
+3. Your take/analysis on what this means for the market (be concrete and actionable)
+
+Format your response EXACTLY as follows (one insight per block):
+
+INSIGHT 1:
+Pattern: [SPECIFIC description of the pattern/trend that spans multiple deals - avoid vague terms]
+Companies: [Company1, Company2, Company3]
+My take: [concrete analysis of what this means]
+
+[Include INSIGHT 2 and INSIGHT 3 only if you can identify additional SPECIFIC patterns across multiple deals]
+
+Be concise, insightful, specific, and only identify genuine trends that span multiple deals. Avoid vague generalizations."""
+
+    if not deals_text:
+        return []
+    
+    deals_list = "\n".join(deals_text)
+    
+    data = f"""Recent Deals (with article excerpts where available):
+{deals_list}
+
+Identify 1-3 themes/patterns that span MULTIPLE deals and format as specified above. Remember: one deal does not indicate a trend. Use the article excerpts to understand what each company actually does - focus on specific use cases and business models, not vague descriptions."""
+
+    try:
+        response = ask_monty(prompt, data, max_tokens=max_tokens, model="gpt-4o")
+
+        if not response or not response.strip():
+            print("  ⚠️  synthesize_deals: model returned empty response")
+            return []
+
+        print(f"  🔍 synthesize_deals raw response (first 500 chars):\n{response[:500]}")
+        
+        # Parse the response to extract insights
+        insights = []
+        current_insight = None
+        
+        lines = response.split('\n')
+        for line in lines:
+            line = line.strip()
+            if line.startswith('INSIGHT') or line.startswith('Insight'):
+                # Save previous insight if exists
+                if current_insight and current_insight.get('pattern'):
+                    insights.append(current_insight)
+                current_insight = {'pattern': '', 'companies': [], 'my_take': '', 'company_links': {}}
+            elif line.startswith('Pattern:') and current_insight:
+                current_insight['pattern'] = line.replace('Pattern:', '').strip()
+            elif line.startswith('Companies:') and current_insight:
+                companies_str = line.replace('Companies:', '').strip()
+                # Extract company names (handle brackets, parentheses, and commas)
+                companies = [c.strip().strip('[]()') for c in companies_str.split(',') if c.strip()]
+                current_insight['companies'] = companies
+                # Map companies to their links (fuzzy match for slight variations)
+                for company in companies:
+                    # Try exact match first
+                    if company in company_link_map:
+                        current_insight['company_links'][company] = company_link_map[company]
+                    else:
+                        # Try case-insensitive match
+                        for mapped_company, link in company_link_map.items():
+                            if company.lower() == mapped_company.lower():
+                                current_insight['company_links'][company] = link
+                                break
+            elif line.startswith('My take:') and current_insight:
+                current_insight['my_take'] = line.replace('My take:', '').strip()
+            elif current_insight and current_insight.get('my_take') and line and not line.startswith('INSIGHT') and not line.startswith('Insight'):
+                # Continue appending to my_take if it spans multiple lines
+                current_insight['my_take'] += ' ' + line
+        
+        # Don't forget the last insight
+        if current_insight and current_insight.get('pattern'):
+            insights.append(current_insight)
+
+        print(f"  🔍 synthesize_deals: parsed {len(insights)} insights before company-count filter")
+
+        # If parsing failed, try a more flexible approach
+        if not insights:
+            # Try to extract insights from a more free-form response
+            # Split by common separators
+            sections = re.split(r'\n\n+|\n---\n|INSIGHT \d+:|Insight \d+:', response)
+            for section in sections:
+                section = section.strip()
+                if not section or len(section) < 50:
+                    continue
+                
+                # Try to extract pattern, companies, and take
+                pattern_match = re.search(r'(?:Pattern|Trend|Theme):\s*(.+?)(?:\n|$)', section, re.IGNORECASE)
+                companies_match = re.search(r'(?:Companies|Examples):\s*(.+?)(?:\n|My take|$)', section, re.IGNORECASE)
+                take_match = re.search(r'My take:\s*(.+?)(?:\n\n|$)', section, re.IGNORECASE | re.DOTALL)
+                
+                if pattern_match:
+                    insight = {
+                        'pattern': pattern_match.group(1).strip(),
+                        'companies': [],
+                        'my_take': take_match.group(1).strip() if take_match else '',
+                        'company_links': {}
+                    }
+                    
+                    if companies_match:
+                        companies_str = companies_match.group(1).strip()
+                        companies = [c.strip().strip('[]()') for c in re.split(r'[,;]', companies_str) if c.strip()]
+                        insight['companies'] = companies
+                        for company in companies:
+                            if company in company_link_map:
+                                insight['company_links'][company] = company_link_map[company]
+                            else:
+                                # Try case-insensitive match
+                                for mapped_company, link in company_link_map.items():
+                                    if company.lower() == mapped_company.lower():
+                                        insight['company_links'][company] = link
+                                        break
+                    
+                    # Only add if pattern exists and has at least 2 companies
+                    if insight['pattern'] and len(insight.get('companies', [])) >= 2:
+                        insights.append(insight)
+        
+        # Filter out insights with only one company (not a trend)
+        valid_insights = []
+        for insight in insights:
+            companies = insight.get('companies', [])
+            if len(companies) >= 2:
+                valid_insights.append(insight)
+            else:
+                print(f"  🔍 synthesize_deals: dropped insight '{insight.get('pattern','')[:60]}' — only {len(companies)} company/companies")
+
+        print(f"  🔍 synthesize_deals: {len(valid_insights)} valid insights after filter")
+        # Limit to 3 insights max
+        return valid_insights[:3]
+        
+    except Exception as e:
+        print(f"Error synthesizing deals: {e}")
+        return []

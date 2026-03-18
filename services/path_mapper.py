@@ -9,6 +9,7 @@ import json
 import os
 
 _mapping_cache = None
+_pattern_cache = {}
 
 def load_mapping():
     """Load the node name mapping from JSON file."""
@@ -78,28 +79,34 @@ def translate_new_path_to_old(new_path):
 
 def get_all_matching_old_paths(new_path_pattern):
     """Get all old paths that match a new path pattern (substring match).
-    
+
     This is useful for finding all database entries that should match
     a given node in the new tree structure.
-    
+
+    Results are cached so repeated lookups for the same pattern are O(1).
+
     Args:
         new_path_pattern: Pattern to match (e.g., "AI > Agent")
-    
+
     Returns:
         list: List of old paths that map to paths containing the pattern
-    
+
     Example:
         >>> get_all_matching_old_paths("AI > Agent")
         ["AI > AI Applications > AI Agents", "AI > AI Applications > AI Agents > AI Personal Assistants", ...]
     """
+    if new_path_pattern in _pattern_cache:
+        return _pattern_cache[new_path_pattern]
+
     mapping = load_mapping()
-    
+
     matching_old_paths = []
     for old_path, info in mapping.items():
         new_path = info['new_path']
         if new_path and new_path_pattern in new_path:
             matching_old_paths.append(old_path)
-    
+
+    _pattern_cache[new_path_pattern] = matching_old_paths
     return matching_old_paths
 
 def get_mapping_stats():

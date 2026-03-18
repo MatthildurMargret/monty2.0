@@ -27,9 +27,9 @@ if not logger.handlers:
     logger.addHandler(handler)
     # Default to INFO unless LOG_LEVEL explicitly set
     try:
-        logger.setLevel(getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper()))
+        logger.setLevel(getattr(logging, os.getenv("LOG_LEVEL", "CRITICAL").upper()))
     except Exception:
-        logger.setLevel(logging.INFO)
+        logger.setLevel(logging.CRITICAL)
 
 # ---- Global Groq rate limiting & retry config ----
 GROQ_RPM = int(os.getenv("GROQ_RPM", "8"))  # Groq requests per minute
@@ -112,6 +112,18 @@ def get_groq_response(prompt, model=free_models[0]):
                 current_model = model
                 time.sleep(retry_delay * (2 ** attempt) + random.random() * 0.5)
     
-    # If all retries and models fail, return a fallback message
+    # If all Groq models fail, fall back to OpenAI
     logger.error("Groq request failed after retries for prompt prefix: %s", prompt[:80])
-    return "Unable to process."
+    try:
+        from openai import OpenAI
+        openai_client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+        resp = openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=500,
+        )
+        logger.info("Groq fallback to OpenAI succeeded")
+        return resp.choices[0].message.content
+    except Exception as e:
+        logger.error("OpenAI fallback also failed: %s", e)
+        return "Unable to process."

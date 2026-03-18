@@ -89,6 +89,7 @@ class Parallel:
             self,
             urls: List[str],
             objective: Optional[str] = None,
+            search_queries: Optional[List[str]] = None,
             excerpts: bool = True,
             full_content: bool = False
         ) -> Any:
@@ -98,6 +99,7 @@ class Parallel:
             Args:
                 urls: List of URLs to extract information from
                 objective: Objective/question to extract information for
+                search_queries: Optional list of search queries to focus extraction
                 excerpts: Whether to return excerpts (default: True)
                 full_content: Whether to return full content (default: False)
                 
@@ -120,6 +122,9 @@ class Parallel:
             
             if objective:
                 payload["objective"] = objective
+            
+            if search_queries:
+                payload["search_queries"] = search_queries
             
             try:
                 response = requests.post(api_url, headers=headers, json=payload, timeout=60)

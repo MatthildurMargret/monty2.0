@@ -10,10 +10,49 @@ import os
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse
 
-from services.groq_api import get_groq_response
 from services.openai_api import web_search
+from openai import OpenAI
 from datetime import datetime
-import re
+
+# Initialize OpenAI client
+_openai_client = None
+
+def get_openai_client():
+    """Get or create OpenAI client instance."""
+    global _openai_client
+    if _openai_client is None:
+        openai_api_key = os.getenv("OPENAI_API_KEY")
+        if not openai_api_key:
+            raise ValueError("OPENAI_API_KEY not found in environment variables")
+        _openai_client = OpenAI(api_key=openai_api_key)
+    return _openai_client
+
+def get_openai_response(prompt, model="gpt-4o-mini", max_tokens=1000):
+    """
+    Get a response from OpenAI API using the nano model (gpt-4o-mini).
+    
+    Args:
+        prompt: The prompt to send to the model
+        model: The model to use (default: gpt-4o-mini, the nano model)
+        max_tokens: Maximum tokens in the response
+    
+    Returns:
+        str: The model's response
+    """
+    try:
+        client = get_openai_client()
+        response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "user", "content": prompt}
+            ],
+            max_tokens=max_tokens,
+            temperature=0.5
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        print(f"Error getting OpenAI response: {e}")
+        return "Unable to process."
 
 def normalize_company_name(company_name):
     """
@@ -219,7 +258,7 @@ def process_fortune_termsheet(email_text):
     import re
     """
     Process Fortune Term Sheet email to extract company names, funding round types, sizes, investors, and descriptions.
-    Uses Groq to extract structured information from each deal entry.
+    Uses OpenAI to extract structured information from each deal entry.
     
     Args:
         email_text (str): The parsed email text content
@@ -228,10 +267,17 @@ def process_fortune_termsheet(email_text):
         list: List of dictionaries containing deal information
     """
     deals = []
-    # Find the VENTURE DEALS section
+    # Find the VENTURE DEALS or VENTURE CAPITAL section (case-insensitive)
+    # Try both "Venture Deals" and "VENTURE CAPITAL" as the section header may vary
+    deals_section = None
     if "Venture Deals" in email_text:
         print("Found VENTURE DEALS section")
         deals_section = email_text.split("Venture Deals")[1]
+    elif "VENTURE CAPITAL" in email_text:
+        print("Found VENTURE CAPITAL section")
+        deals_section = email_text.split("VENTURE CAPITAL")[1]
+    
+    if deals_section:
         
         # Find the end of the deals section (usually marked by another section like PRIVATE EQUITY)
         end_markers = ["Private Equity"]
@@ -270,7 +316,7 @@ def process_fortune_termsheet(email_text):
             if not entry.strip():
                 continue
             
-            # Use Groq to extract structured information from each deal entry
+            # Use OpenAI to extract structured information from each deal entry
             prompt = f"""
             Extract the following information from this startup funding announcement:
             
@@ -306,8 +352,8 @@ def process_fortune_termsheet(email_text):
             """
             
             try:
-                # Get response from Groq
-                response = get_groq_response(prompt)
+                # Get response from OpenAI
+                response = get_openai_response(prompt)
                 
                 # Extract the JSON part from the response
                 import json
@@ -339,7 +385,7 @@ def process_fortune_termsheet(email_text):
                     deals.append(deal)
                     
             except Exception as e:
-                print(f"Error extracting information with Groq: {e}")
+                print(f"Error extracting information with OpenAI: {e}")
                 # Create a minimal deal entry with just the raw text
                 first_line = entry.strip().split("\n")[0] if entry.strip() else ""
                 company_name = first_line.strip() if first_line else "Unknown Company"
@@ -357,7 +403,7 @@ def process_fortune_termsheet(email_text):
                 }
                 deals.append(deal)
     else:
-        print("No VENTURE DEALS section found")
+        print("No VENTURE DEALS or VENTURE CAPITAL section found")
         print(email_text)
     
     return deals
@@ -365,7 +411,7 @@ def process_fortune_termsheet(email_text):
 def process_fresh_funding(email_text):
     """
     Process F6S email to extract company names, funding round types, sizes, investors, and descriptions.
-    Uses Groq to extract structured information from each deal entry.
+    Uses OpenAI to extract structured information from each deal entry.
     
     Args:
         email_text (str): The parsed email text content
@@ -399,7 +445,7 @@ def process_fresh_funding(email_text):
             "$" in entry or "Seed" in entry or "Series" in entry or "Acquisition" in entry):
             
             try:
-                # Use Groq to extract structured information from each deal entry
+                # Use OpenAI to extract structured information from each deal entry
                 prompt = f"""
                 Extract the following information from this startup funding announcement:
                 
@@ -434,8 +480,8 @@ def process_fresh_funding(email_text):
                 {{"company": "...", "amount": "...", "funding_round": "...", "vertical": "...", "investors": "...", "category": "..."}}
                 """
                 
-                # Get response from Groq
-                response = get_groq_response(prompt)
+                # Get response from OpenAI
+                response = get_openai_response(prompt)
                 
                 # Extract the JSON part from the response
                 import json
@@ -467,42 +513,106 @@ def process_fresh_funding(email_text):
                     deals.append(deal)
                     
             except Exception as e:
-                print(f"Error extracting information with Groq: {e}")
+                print(f"Error extracting information with OpenAI: {e}")
     
     return deals
 
 def process_daily_digest(email_text):
     print("Processing Daily Digest")
     import re
-    start_marker = "💰 Startup funding updates"
-    if start_marker not in email_text:
+    # Try multiple variations of the start marker (case-insensitive)
+    start_markers = [
+        "💰 Startup funding updates",
+        "💰 Startup Funding Updates",
+        "💰 Startup funding Updates",
+        "💰 Startup Funding updates"
+    ]
+    
+    # Find which marker exists (case-insensitive search)
+    start_marker = None
+    for marker in start_markers:
+        if marker in email_text:
+            start_marker = marker
+            break
+    
+    if not start_marker:
+        # Try case-insensitive search
+        lines_lower = email_text.lower()
+        if "💰 startup funding updates" in lines_lower or "startup funding updates" in lines_lower:
+            # Find the actual line with the marker
+            lines = email_text.splitlines()
+            for i, line in enumerate(lines):
+                if "startup funding updates" in line.lower() and "💰" in line:
+                    start_marker = line.strip()
+                    break
+    
+    if not start_marker:
         print("No start marker found")
         return []
 
     # --- Step 1: Split into lines for better parsing ---
     lines = email_text.splitlines()
 
-    # Step 2: Find start line index
+    # Step 2: Find start line index (case-insensitive)
     start_idx = None
     for i, line in enumerate(lines):
-        if start_marker in line:
+        if "startup funding updates" in line.lower() and "💰" in line:
             start_idx = i
             break
     if start_idx is None:
         print("Start marker not found in lines")
         return []
 
-    # Step 3: Read until next ALL CAPS heading (new section)
+    # Funding section headers we should NOT break on (PRE-SEED, SEED, GROWTH are sub-sections)
+    FUNDING_SECTION_HEADERS = frozenset({
+        'PRE-SEED', 'SEED', 'GROWTH', 'SERIES A', 'SERIES B', 'SERIES C',
+        'SERIES D', 'SERIES E', 'SERIES F'
+    })
+    # Non-funding section markers that indicate end of deals
+    END_SECTION_MARKERS = [
+        'from our partner', 'daily picks', 'partnership with us',
+        'breaking news', 'read in app', 'what else is brewing'
+    ]
+
+    # Step 3: Read until we hit an end marker (not funding sub-section headers)
     startups_lines = []
     for j in range(start_idx + 1, len(lines)):
-        # Detect a new ALL CAPS heading (like FROM OUR PARTNER, NEW VCs IN THE MARKET)
-        if re.match(r"^[A-Z\s&\-]{5,}$", lines[j].strip()):
+        line_stripped = lines[j].strip()
+        line_lower = line_stripped.lower()
+        # Break only on known non-funding section markers
+        if any(marker in line_lower for marker in END_SECTION_MARKERS):
             break
+        # Do NOT break on funding section headers (PRE-SEED, SEED, GROWTH, etc.)
+        if re.match(r"^[A-Z\s&\-]{4,}$", line_stripped):
+            normalized_header = line_stripped.upper().replace(' ', ' ')
+            if any(h in normalized_header for h in FUNDING_SECTION_HEADERS):
+                # This is a funding sub-section header, keep reading
+                pass
+            elif len(line_stripped) >= 10:
+                # Long ALL CAPS line (e.g. FROM OUR PARTNER) - end of funding section
+                break
         startups_lines.append(lines[j])
 
     # Step 4: Only keep lines that look like funding announcements
-    entries = [line.strip() for line in startups_lines 
-               if re.search(r"(raised|received|closed|secured|received).*?\$", line, re.IGNORECASE)]
+    entries = [line.strip() for line in startups_lines
+               if re.search(r"(raised|received|closed|secured).*?\$", line, re.IGNORECASE)]
+
+    # Fallback: if no entries, extract block from start marker until first end marker
+    if not entries and start_idx is not None:
+        email_lower = email_text.lower()
+        earliest_end = len(email_text)
+        for marker in END_SECTION_MARKERS:
+            idx = email_lower.find(marker)
+            if idx != -1 and idx < earliest_end:
+                earliest_end = idx
+        block = email_text[:earliest_end]
+        start_marker_pos = block.lower().find("startup funding updates")
+        if start_marker_pos != -1:
+            after_start = block[start_marker_pos + len("startup funding updates"):]
+            fallback_lines = after_start.splitlines()
+            entries = [line.strip() for line in fallback_lines
+                       if re.search(r"(raised|received|closed|secured).*?\$", line, re.IGNORECASE)
+                       and len(line.strip()) > 20]
 
     print(f"Entries found: {len(entries)}")
     deals = []
@@ -512,7 +622,7 @@ def process_daily_digest(email_text):
         if entry == "" or entry == "\n":
             continue
         try:
-                # Use Groq to extract structured information from each deal entry
+                # Use OpenAI to extract structured information from each deal entry
                 prompt = f"""
                 Extract the following information from this startup funding announcement:
                 
@@ -547,8 +657,8 @@ def process_daily_digest(email_text):
                 {{"company": "...", "amount": "...", "funding_round": "...", "vertical": "...", "investors": "...", "category": "..."}}
                 """
                 
-                # Get response from Groq
-                response = get_groq_response(prompt)
+                # Get response from OpenAI
+                response = get_openai_response(prompt)
                 
                 # Extract the JSON part from the response
                 import json
@@ -570,7 +680,7 @@ def process_daily_digest(email_text):
                         "Amount": extracted_info.get("amount", ""),
                         "Funding Round": extracted_info.get("funding_round", ""),
                         "Date": datetime.now().strftime("%Y-%m-%d"),
-                        "Source": "F6S Fresh Funding",
+                        "Source": "Venture Daily Digest",
                         "Investors": extracted_info.get("investors", ""),
                         "Vertical": extracted_info.get("vertical", ""),
                         "Category": extracted_info.get("category", ""),
@@ -582,7 +692,7 @@ def process_daily_digest(email_text):
                         print("Deal found: ")
                         print(deal)
         except Exception as e:
-            print(f"Error extracting information with Groq: {e}")
+            print(f"Error extracting information with OpenAI: {e}")
     
     return deals
 
@@ -603,7 +713,7 @@ def fill_in_the_blanks(deal):
 
 def extract_info_from_article(deal, article_text):
     """
-    Use Groq to extract missing information from the article text.
+    Use OpenAI to extract missing information from the article text.
     
     Args:
         deal (dict): The deal dictionary with potentially missing information
@@ -639,7 +749,7 @@ def extract_info_from_article(deal, article_text):
     if not missing_info:
         return deal
     
-    # Construct a prompt for Groq
+    # Construct a prompt for OpenAI
     prompt = f"""
     Extract the following information from this startup funding article about {deal['Company']}:
     
@@ -663,8 +773,8 @@ def extract_info_from_article(deal, article_text):
     """
     
     try:
-        # Get response from Groq
-        response = get_groq_response(prompt)
+        # Get response from OpenAI
+        response = get_openai_response(prompt)
         
         # Extract the JSON part from the response
         import json
@@ -741,7 +851,7 @@ def extract_info_from_article(deal, article_text):
             if "vertical" in extracted_info and extracted_info["vertical"]:
                 deal["Vertical"] = extracted_info["vertical"]
     except Exception as e:
-        print(f"Error extracting information with Groq: {e}")
+        print(f"Error extracting information with OpenAI: {e}")
     
     return deal
 

@@ -498,6 +498,40 @@ import json
 
 from datetime import datetime
 
+def estimate_founder_age(profile):
+    """
+    Estimate founder age from the earliest start_date across all_experiences.
+    Assumes first role begins around age 22. Returns estimated age, or None
+    if no usable date is found.
+    """
+    all_experiences = profile.get("all_experiences") or []
+    if isinstance(all_experiences, str):
+        try:
+            all_experiences = json.loads(all_experiences)
+        except Exception:
+            return None
+
+    current_year = datetime.now().year
+    earliest_year = None
+    for exp in all_experiences:
+        start = (exp.get("start_date") or "").strip()
+        if start and len(start) >= 4:
+            try:
+                year = int(start[:4])
+                if 1960 < year <= current_year:
+                    if earliest_year is None or year < earliest_year:
+                        earliest_year = year
+            except (ValueError, TypeError):
+                pass
+
+    if earliest_year is None:
+        return None
+
+    # Assume first substantive role starts around age 22
+    estimated_birth_year = earliest_year - 22
+    return current_year - estimated_birth_year
+
+
 def check_if_founder(row, check_json=True):
     """
     Determine if someone is a current founder and return the index of the
@@ -611,7 +645,7 @@ def check_founder_pedigree(profile):
 
     company_description = profile.get("description_1") or ""
 
-    # Build a concise experience list — company + position only,
+    # Build a concise experience list — company + position + dates,
     # skip the current founding role (index == company_index)
     current_idx = profile.get("company_index", 0)
     exp_lines = []
@@ -620,8 +654,11 @@ def check_founder_pedigree(profile):
             continue
         company = (exp.get("company_name") or "").strip()
         position = (exp.get("position") or "").strip()
+        start = (exp.get("start_date") or "").strip()
+        end = (exp.get("end_date") or "present").strip()
+        date_str = f" ({start}–{end})" if start else ""
         if company or position:
-            exp_lines.append(f"- {position} at {company}")
+            exp_lines.append(f"- {position} at {company}{date_str}")
 
     if not exp_lines:
         return False, "No prior experience to evaluate"
@@ -629,7 +666,7 @@ def check_founder_pedigree(profile):
     experience_text = "\n".join(exp_lines)
     company_text = f"\nCurrent company description: {company_description}" if company_description else ""
 
-    prompt = """You are a strict filter for a seed-stage VC firm evaluating founder profiles on two dimensions.
+    prompt = """You are a filter for a seed-stage VC firm evaluating founder backgrounds on two dimensions.
 
 Return a JSON object with two fields:
 - "passes": true or false
@@ -637,13 +674,33 @@ Return a JSON object with two fields:
 
 A profile passes only if BOTH conditions are met:
 
-CONDITION 1 — PEDIGREE (at least ONE must be clearly met):
-1. Worked at a top-tier big tech company: Google/Alphabet, Meta/Facebook, Apple, Amazon, Microsoft, Nvidia, Netflix, Stripe, Uber, Airbnb, Twitter/X, LinkedIn, Salesforce, Snap, Lyft, DoorDash, Coinbase, Robinhood, Palantir, or similar well-known tech giants. Internships at these companies count.
-2. Worked at a well-funded startup clearly recognizable as having raised $100M+, i.e. a known unicorn or high-profile startup
-3. Conducted genuine research at a prestigious institution: MIT, Stanford, CMU, Caltech, Harvard, Oxford, Cambridge, ETH Zurich — or at a leading AI/tech research lab such as DeepMind, OpenAI, Anthropic, Google Brain, Microsoft Research, Meta AI Research, Bell Labs
+CONDITION 1 — PEDIGREE & TRAJECTORY:
+You are evaluating whether this person has the background and momentum that a seed-stage VC would find compelling. Look at the full arc of their career, not just whether they ever touched a prestigious name.
+
+Critical principle: calibrate your bar to the person's career stage. A 25-year-old and a 38-year-old should be judged differently — a short career is not a red flag for a young founder, it is expected. What matters is whether the arc so far is impressive relative to where they are in life.
+
+Only count roles that are substantive: full-time employment, meaningful internships, or genuine research positions. Ignore board memberships, advisorships, and one-off consulting.
+
+**Two archetypes that should pass:**
+
+1. **Early-career / young founder (likely mid-to-late 20s, short work history):** A degree from a top university combined with at least one meaningful experience at a high-caliber company or institution is sufficient. They may only have 2–4 years of work experience total — that is fine. A top CS graduate who interned at Google and then spent a year at a well-funded startup before founding their company is exactly the profile we want. Do not penalize short careers for young founders.
+
+2. **Experienced founder (30s, substantial work history):** A clear trajectory of increasingly impressive roles over the last 3–5 years. A brief early-career role at a prestigious name followed by years of unimpressive work does not pass — the momentum needs to be recent and sustained.
+
+Use the following criteria to reason about quality — the specific company or institution name matters less than whether it clearly meets the underlying bar:
+
+- **High-caliber tech company**: Known for extremely competitive hiring, high engineering or product bar, and significant industry impact. Household-name big tech and well-known high-growth startups count. Use your judgment — if a company is clearly recognized as a top-tier employer, it counts even if not listed explicitly.
+- **Elite financial institution**: Highly selective firms known for attracting top talent — top investment banks, hedge funds, or venture capital firms. For a young founder, a meaningful internship here counts. For an experienced founder, it needs to be a more central part of their career.
+- **Top research institution**: A university or lab globally recognized for significant research output — top research universities worldwide, leading AI/tech/biotech research labs. A recent graduate or PhD student from a world-class university is a strong signal even with limited industry experience.
+- **Relevant deep expertise**: For biotech, life sciences, or deep tech: strong academic credentials or experience at a recognized institution in their field, calibrated to career stage.
+- **Successful prior exit**: Previously founded a company with a clearly successful outcome (acquisition by a recognizable company or IPO). Only count if verifiable from training data.
+
+Ask yourself: "Would a partner at a top-tier VC firm look at this background — given how old this person appears to be — and want to take a meeting?" If yes, it passes.
+
+Do not fail a young founder simply because their career is short. Do not pass an experienced founder whose only credential is a distant early-career role with no follow-through.
 
 CONDITION 2 — COMPANY TYPE:
-The current company must appear to be a genuine technology startup. Fail this condition only if there is clear evidence it is a consultancy, advisory firm, investment fund, holding company, or agency. If the company has no description (stealth/early stage), assume it is a startup and pass this condition.
+The current company must appear to be a genuine product or technology company — including hardware, biotech, deep tech, and life sciences startups. Fail this condition if there is clear evidence it is any of the following: consultancy, staffing agency, marketing agency, lead generation service, advisory firm, investment fund, venture studio, venture capital firm, holding company, accelerator, incubator, or law firm. Labeling a services business as "AI-powered" or "tech-enabled" does not make it a product company — if its primary offering is a service delivered by people, it fails. Venture studios fail even if they do research or call themselves institutes. If the company is stealth, early stage, or has no description, assume it is a startup and pass.
 
 Respond with only the JSON object, no other text."""
 
@@ -911,6 +968,13 @@ def process_profiles_aviato(max_profiles=10):
         mapped = map_aviato_to_schema(result)
         mapped['profile_url'] = url
         mapped = monty_enrich_profile(mapped)
+
+        # Age filter: skip founders estimated to be over 40
+        if mapped.get("founder"):
+            estimated_age = estimate_founder_age(mapped)
+            if estimated_age is not None and estimated_age > 40:
+                logger.info("Skipping %s — estimated age %d (first role too early)", mapped.get("name", url), estimated_age)
+                continue
 
         # Pedigree check: store result on profile so it can be filtered downstream.
         # Founders that fail are still saved to the DB (allows manual correction)

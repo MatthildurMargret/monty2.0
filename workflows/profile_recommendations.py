@@ -437,7 +437,7 @@ def format_profiles_for_weekly_update(profiles):
         return ""
     
     message_parts = [
-        "Here are some interesting profiles we came across this week:\n"
+        "Here are some interesting profiles we came across this week (not currently founders but strong signal and worth keeping an eye out!):\n"
     ]
     
     for profile in profiles:
