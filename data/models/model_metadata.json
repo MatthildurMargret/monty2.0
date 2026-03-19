@@ -1,0 +1,129 @@
+{
+  "training_date": "2025-12-02T14:58:46.400612",
+  "hyperparameters": {
+    "classifier": {
+      "objective": "multi:softprob",
+      "num_class": 3,
+      "n_estimators": 100,
+      "max_depth": 6,
+      "learning_rate": 0.1,
+      "subsample": 0.8,
+      "colsample_bytree": 0.8
+    },
+    "ranker": {
+      "objective": "rank:pairwise",
+      "n_estimators": 100,
+      "max_depth": 6,
+      "learning_rate": 0.1,
+      "subsample": 0.8,
+      "colsample_bytree": 0.8
+    }
+  },
+  "classifier_metrics": {
+    "accuracy": 0.7369281045751634,
+    "precision": 0.7089254341591504,
+    "recall": 0.7369281045751634,
+    "f1_score": 0.7028962408847181,
+    "confusion_matrix": [
+      [
+        321,
+        17,
+        3
+      ],
+      [
+        47,
+        116,
+        10
+      ],
+      [
+        25,
+        59,
+        14
+      ]
+    ]
+  },
+  "ranker_metrics": {
+    "ndcg@k": 0.9734811604096786,
+    "mrr": 0.9864864864864865,
+    "precision@k": 0.49369369369369365,
+    "n_groups": 370,
+    "ranker_score_min": -4.929819107055664,
+    "ranker_score_max": 3.2652225494384766,
+    "metrics_per_group": [
+      {
+        "group_id": 1,
+        "ndcg@k": 1.0,
+        "mrr": 1.0,
+        "precision@k": 1.0,
+        "group_size": 3
+      },
+      {
+        "group_id": 8,
+        "ndcg@k": 0.8213137146137828,
+        "mrr": 1.0,
+        "precision@k": 1.0,
+        "group_size": 3
+      },
+      {
+        "group_id": 13,
+        "ndcg@k": 0.7579237460681981,
+        "mrr": 1.0,
+        "precision@k": 1.0,
+        "group_size": 3
+      },
+      {
+        "group_id": 14,
+        "ndcg@k": 0.7579237460681981,
+        "mrr": 1.0,
+        "precision@k": 1.0,
+        "group_size": 3
+      },
+      {
+        "group_id": 20,
+        "ndcg@k": 0.8213137146137828,
+        "mrr": 1.0,
+        "precision@k": 1.0,
+        "group_size": 3
+      },
+      {
+        "group_id": 21,
+        "ndcg@k": 1.0,
+        "mrr": 1.0,
+        "precision@k": 1.0,
+        "group_size": 3
+      },
+      {
+        "group_id": 26,
+        "ndcg@k": 1.0,
+        "mrr": 1.0,
+        "precision@k": 1.0,
+        "group_size": 3
+      },
+      {
+        "group_id": 34,
+        "ndcg@k": 0.7579237460681981,
+        "mrr": 1.0,
+        "precision@k": 1.0,
+        "group_size": 3
+      },
+      {
+        "group_id": 37,
+        "ndcg@k": 1.0,
+        "mrr": 1.0,
+        "precision@k": 1.0,
+        "group_size": 3
+      },
+      {
+        "group_id": 40,
+        "ndcg@k": 1.0,
+        "mrr": 1.0,
+        "precision@k": 1.0,
+        "group_size": 3
+      }
+    ]
+  },
+  "ranker_normalization": {
+    "min": -4.929819107055664,
+    "max": 3.2652225494384766
+  }
+}

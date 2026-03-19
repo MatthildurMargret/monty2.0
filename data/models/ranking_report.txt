@@ -1,0 +1,11 @@
+Ranking Model Evaluation Report
+================================================================================
+
+NDCG@10: 0.9735
+MRR: 0.9865
+Precision@10: 0.4937
+Number of groups evaluated: 370
+
+Ranker Score Normalization Parameters:
+  Min: -4.929819107055664
+  Max: 3.2652225494384766

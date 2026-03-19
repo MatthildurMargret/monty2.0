@@ -1,0 +1,23 @@
+Classification Model Evaluation Report
+================================================================================
+
+Accuracy: 0.7369
+Precision: 0.7089
+Recall: 0.7369
+F1-Score: 0.7029
+
+Confusion Matrix:
+[[321  17   3]
+ [ 47 116  10]
+ [ 25  59  14]]
+
+Classification Report:
+                       precision    recall  f1-score   support
+
+       Irrelevant (0)       0.82      0.94      0.87       341
+Relevant-but-Pass (1)       0.60      0.67      0.64       173
+        IC-worthy (2)       0.52      0.14      0.22        98
+
+             accuracy                           0.74       612
+            macro avg       0.65      0.58      0.58       612
+         weighted avg       0.71      0.74      0.70       612
