@@ -4,6 +4,7 @@ import logging
 import os
 import schedule
 import time
+import traceback
 from datetime import datetime
 from dotenv import load_dotenv
 

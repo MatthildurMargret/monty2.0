@@ -70,7 +70,10 @@ sys.path.insert(0, os.path.join(_root, 'tests'))
 
 # Suppress pandas warnings
 warnings.filterwarnings('ignore', category=UserWarning)
-warnings.filterwarnings('ignore', category=pd.errors.SettingWithCopyWarning)
+try:
+    warnings.filterwarnings('ignore', category=pd.errors.SettingWithCopyWarning)
+except AttributeError:
+    pass  # Removed in pandas 2.0+
 
 # Notion database IDs used for pipeline/tracked/passed filtering
 PIPELINE_ID = "15e30f29-5556-4fe1-89f6-76d477a79bf8"
@@ -1080,7 +1083,7 @@ def _fetch_and_filter_founders():
         AND (latestdealtype IS NULL OR latestdealtype NOT ILIKE 'Series%')
         AND (
             building_since IS NULL OR building_since = ''
-            OR (building_since ~ '^\d{4}' AND SUBSTRING(building_since FROM 1 FOR 4)::integer >= DATE_PART('year', CURRENT_DATE) - 2)
+            OR (building_since ~ '^\\d{4}' AND SUBSTRING(building_since FROM 1 FOR 4)::integer >= DATE_PART('year', CURRENT_DATE) - 2)
         )
         """, conn)
         new_profiles = new_profiles.drop_duplicates(subset=['name'])
