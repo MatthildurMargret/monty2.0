@@ -63,15 +63,17 @@ def authenticate_gmail():
 
     # If we have credentials, check if they're valid or can be refreshed
     if creds:
+        print(f"  Token valid: {creds.valid}, expired: {creds.expired}, has refresh_token: {bool(creds.refresh_token)}")
         if not creds.valid and creds.refresh_token:
             try:
+                print("  Attempting token refresh...")
                 creds.refresh(Request())
+                print("✅ Credentials refreshed successfully")
                 # Save the refreshed token to local file
                 token_data = json.loads(creds.to_json())
                 os.makedirs(os.path.dirname(TOKEN_PATH), exist_ok=True)
                 with open(TOKEN_PATH, 'w') as token_file:
                     json.dump(token_data, token_file)
-                print("✅ Credentials refreshed and saved to local file")
             except Exception as e:
                 print(f"Warning: Could not refresh credentials: {e}")
                 creds = None

@@ -413,10 +413,8 @@ def _select_top_with_pedigree(profiles_ranked, new_profiles, target=3):
         passes, reason = check_founder_pedigree(profile_data)
         pedigree_results.append((profile_url, passes, reason))
         if passes:
-            print(f"  Pedigree passed for {row.get('name', 'unknown')}: {reason}")
             selected_rows.append(row)
-        else:
-            print(f"  Pedigree check failed for {row.get('name', 'unknown')}: {reason}")
+
     result = pd.DataFrame(selected_rows) if selected_rows else pd.DataFrame(columns=profiles_ranked.columns)
     return result, pedigree_results
 
@@ -448,7 +446,7 @@ def _save_pedigree_results(pedigree_results):
             else:
                 passed += 1
         conn.commit()
-        print(f"  Saved pedigree results: {passed} passed, {failed} failed")
+        pass
     except Exception as e:
         print(f"  ⚠️  Error saving pedigree results: {e}")
         conn.rollback()
@@ -813,7 +811,7 @@ def get_exa_profiles_for_vertical(vertical: str, num_results: int = 10) -> list:
         mapped = monty_enrich_profile(mapped)
         passes, reason = check_founder_pedigree(mapped)
         if not passes:
-            print(f"  ⚠️  Exa profile failed pedigree check: {reason}")
+            pass
             continue
         mapped["access_date"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         mapped = _run_exa_pipeline(mapped)

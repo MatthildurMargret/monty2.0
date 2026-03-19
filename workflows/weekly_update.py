@@ -576,10 +576,7 @@ def _pick_top_founder_with_pedigree(ranked_df, full_founders_df):
         passes, reason = check_founder_pedigree(profile_data)
         pedigree_results.append((profile_url, passes, reason))
         if passes:
-            print(f"    Pedigree passed for {row.get('name', 'unknown')}: {reason}")
             return row.to_dict(), pedigree_results
-        else:
-            print(f"    Pedigree failed for {row.get('name', 'unknown')}: {reason}")
 
     # None passed — return the top-ranked one anyway so the newsletter isn't empty,
     # but still persist the pedigree results so failures are recorded.
@@ -612,7 +609,7 @@ def _save_weekly_pedigree_results(pedigree_results):
         conn.commit()
         passed = sum(1 for _, p, _ in pedigree_results if p)
         failed = len(pedigree_results) - passed
-        print(f"    Saved pedigree results: {passed} passed, {failed} failed")
+        pass
     except Exception as e:
         print(f"    ⚠️  Error saving pedigree results: {e}")
         conn.rollback()
