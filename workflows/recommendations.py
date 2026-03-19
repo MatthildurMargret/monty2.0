@@ -1188,7 +1188,10 @@ def send_extra_recs(test=True, include_exa=True):
     from services.notion import import_pipeline, normalize_string
     from services.model_loader import load_ranker_model
     from services.ranker_inference import rank_profiles
-    from test_models import prepare_test_features
+    try:
+        from test_models import prepare_test_features
+    except ImportError:
+        prepare_test_features = None
 
     # Load ranker-only model (shared loader — no duplicate boilerplate)
     ranker_inference = load_ranker_model()
