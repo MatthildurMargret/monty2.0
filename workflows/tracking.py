@@ -8,7 +8,6 @@ import argparse
 from datetime import datetime, timedelta
 import pandas as pd
 from bs4 import BeautifulSoup
-from firecrawl import FirecrawlApp
 from dotenv import load_dotenv
 
 # Add the parent directory to the Python path so we can import modules
@@ -736,7 +735,8 @@ def parse_list_for_updates():
     return processed_count
 
 def scrape_with_firecrawl():
-    firecrawl_api_key = "fc-f80912783c0941a5b3c1f44cb24a3fa8"
+    from firecrawl import FirecrawlApp
+    firecrawl_api_key = os.getenv("FIRECRAWL_API_KEY", "")
     url = "https://www.visir.is/"
     app = FirecrawlApp(api_key=firecrawl_api_key)
     scrape_status = app.scrape_url(
