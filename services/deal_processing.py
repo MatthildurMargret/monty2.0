@@ -271,10 +271,8 @@ def process_fortune_termsheet(email_text):
     # Try both "Venture Deals" and "VENTURE CAPITAL" as the section header may vary
     deals_section = None
     if "Venture Deals" in email_text:
-        print("Found VENTURE DEALS section")
         deals_section = email_text.split("Venture Deals")[1]
     elif "VENTURE CAPITAL" in email_text:
-        print("Found VENTURE CAPITAL section")
         deals_section = email_text.split("VENTURE CAPITAL")[1]
     
     if deals_section:
@@ -285,11 +283,6 @@ def process_fortune_termsheet(email_text):
             if marker in deals_section:
                 deals_section = deals_section.split(marker)[0].strip()
                 break
-        
-        # Add debugging to see the full deals section
-        print("\n\nDEALS SECTION:")
-        print(deals_section[:500] + "..." if len(deals_section) > 500 else deals_section)
-        print("\n\n")
         
         # Fortune Term Sheet format has deals that start with a dash
         # We need to split by the dash pattern at the beginning of lines
@@ -307,10 +300,6 @@ def process_fortune_termsheet(email_text):
         
         # Add the dash back to each entry for context
         deal_entries = [f"- {entry.strip()}" for entry in entries if entry.strip()]
-        
-        print(f"Found {len(deal_entries)} potential deal entries")
-        for i, entry in enumerate(deal_entries[:5]):  # Show first 5 for debugging
-            print(f"\nEntry {i+1}:\n{entry[:200]}..." if len(entry) > 200 else entry)
         
         for entry in deal_entries:
             if not entry.strip():
@@ -381,7 +370,6 @@ def process_fortune_termsheet(email_text):
                         "Category": extracted_info.get("category", ""),
                         "Link": ""  # No direct link in the email
                     }
-                    print(deal)
                     deals.append(deal)
                     
             except Exception as e:
@@ -402,10 +390,6 @@ def process_fortune_termsheet(email_text):
                     "Link": ""
                 }
                 deals.append(deal)
-    else:
-        print("No VENTURE DEALS or VENTURE CAPITAL section found")
-        print(email_text)
-    
     return deals
 
 def process_fresh_funding(email_text):
@@ -518,7 +502,6 @@ def process_fresh_funding(email_text):
     return deals
 
 def process_daily_digest(email_text):
-    print("Processing Daily Digest")
     import re
     # Try multiple variations of the start marker (case-insensitive)
     start_markers = [
@@ -547,7 +530,6 @@ def process_daily_digest(email_text):
                     break
     
     if not start_marker:
-        print("No start marker found")
         return []
 
     # --- Step 1: Split into lines for better parsing ---
@@ -560,7 +542,6 @@ def process_daily_digest(email_text):
             start_idx = i
             break
     if start_idx is None:
-        print("Start marker not found in lines")
         return []
 
     # Funding section headers we should NOT break on (PRE-SEED, SEED, GROWTH are sub-sections)
@@ -614,7 +595,6 @@ def process_daily_digest(email_text):
                        if re.search(r"(raised|received|closed|secured).*?\$", line, re.IGNORECASE)
                        and len(line.strip()) > 20]
 
-    print(f"Entries found: {len(entries)}")
     deals = []
     
     for entry in entries:
@@ -689,8 +669,6 @@ def process_daily_digest(email_text):
                     non_deals = ["", "Unknown", "Not specified", "Not Disclosed", None, "None", "N/A", "?", "TBD", "Unnamed"]
                     if deal["Company"] not in non_deals or (deal["Funding Round"] is None and deal["Amount"] is None):
                         deals.append(deal)
-                        print("Deal found: ")
-                        print(deal)
         except Exception as e:
             print(f"Error extracting information with OpenAI: {e}")
     
@@ -881,8 +859,6 @@ def serpapi_search(deal_dict, num_results=10):
             "title": r.get("title")
         })
     best_link = pick_best_link(links, company, amount, round_type)
-    print("Found links for deal: ", company, "Links: ", links)
-    print("Best link: ", best_link)
     return best_link
 
 def score_result(result, company, amount=None, round_type=None):
@@ -974,7 +950,6 @@ def find_link_if_missing(deal):
     """
     # Skip if link already exists
     if deal.get("Link") and deal["Link"] != "" and str(deal["Link"]) != "nan":
-        print("Link already exists:", deal["Link"])
         return deal
     
     # Extract key information for search and relevance checking
@@ -1116,15 +1091,9 @@ def find_link_if_missing(deal):
             if scored_results and scored_results[0][0] > 0:  # Only use if score > 0
                 best_result = scored_results[0][1]
                 deal["Link"] = best_result["link"]
-                print(f"Found links for deal: {company} Links: {len(results)} results")
-                print(f"Best link: {deal['Link']}")
             else:
-                print(f"Found links for deal: {company} Links: {len(results)} results (none scored high enough)")
-                print(f"Best link: None")
                 deal["Link"] = f"https://www.google.com/search?q={search_query.replace(' ', '+')}"
         else:
-            print(f"Found links for deal: {company} Links: []")
-            print(f"Best link: None")
             deal["Link"] = f"https://www.google.com/search?q={search_query.replace(' ', '+')}"
             
     except ImportError:
@@ -1163,7 +1132,6 @@ def analyze_early_stage_deal(deal):
             import pandas as pd
             from services.database import insert_search_results, create_tables_if_not_exist
             
-            print(f"Looking for founders of {company_name}...")
             # Run the search in headless mode to avoid UI disruption
             founders = find_company_founders(company_name, headless=True, wait_time=3)
             
@@ -1201,7 +1169,6 @@ def analyze_early_stage_deal(deal):
                                 "company_url": ""
                             })
                 
-                print(f"Found {len(deal['Founders'])} founders for {company_name}")
                 
                 # Insert records into database if we found any valid founders
                 if db_records:
@@ -1214,14 +1181,11 @@ def analyze_early_stage_deal(deal):
                         
                         # Insert into search_list table
                         insert_result = insert_search_results(df, table_name="search_list", stealth_mode=False)
-                        if insert_result:
-                            print(f"Successfully added {len(db_records)} founders to search_list database")
-                        else:
-                            print("Failed to add founders to database")
+                        if not insert_result:
+                            print(f"⚠️  Failed to add founders to database for {company_name}")
                     except Exception as db_error:
-                        print(f"Error adding founders to database: {str(db_error)}")
+                        print(f"⚠️  Error adding founders to database: {str(db_error)}")
             else:
-                print(f"No founders found for {company_name}")
                 deal["Founders"] = []
                 
         except Exception as e:

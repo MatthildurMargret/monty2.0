@@ -132,56 +132,31 @@ def upload_deals_to_supabase(deals_df, table_name="all_deals", upsert=False, onl
         
         # Deduplicate based on (company, date) before uploading to avoid duplicate key errors
         # Keep the first occurrence of each (company, date) pair
-        print(f"  Deduplicating deals (removing duplicate company+date pairs)...")
         original_count = len(df_copy)
         df_copy = df_copy.drop_duplicates(subset=['company', 'date'], keep='first')
-        deduped_count = len(df_copy)
-        if original_count != deduped_count:
-            print(f"  Removed {original_count - deduped_count} duplicate deals (kept {deduped_count} unique)")
-        
+
         # If only_new is True, filter out deals that already exist in Supabase
         if only_new:
-            print(f"🔍 Checking for existing deals in Supabase table '{table_name}'...")
             try:
-                # Get all existing deals from Supabase (company and date only for comparison)
                 existing_deals_response = supabase.table(table_name).select('company,date').execute()
                 existing_deals = existing_deals_response.data if existing_deals_response.data else []
-                
-                # Create a set of (company, date) tuples for fast lookup
                 existing_keys = set()
                 for deal in existing_deals:
                     company = str(deal.get('company', '')).strip().lower() if deal.get('company') else ''
                     date = str(deal.get('date', '')).strip() if deal.get('date') else ''
                     if company and date:
                         existing_keys.add((company, date))
-                
-                print(f"   Found {len(existing_keys)} existing deals in Supabase")
-                
-                # Filter out deals that already exist
-                original_count = len(df_copy)
                 df_copy['_key'] = df_copy.apply(
-                    lambda row: (str(row.get('company', '')).strip().lower() if pd.notna(row.get('company')) else '', 
+                    lambda row: (str(row.get('company', '')).strip().lower() if pd.notna(row.get('company')) else '',
                                 str(row.get('date', '')).strip() if pd.notna(row.get('date')) else ''),
                     axis=1
                 )
                 df_copy = df_copy[~df_copy['_key'].isin(existing_keys)]
                 df_copy = df_copy.drop(columns=['_key'])
-                
-                new_count = len(df_copy)
-                skipped_count = original_count - new_count
-                
-                if skipped_count > 0:
-                    print(f"   ⏭️  Skipping {skipped_count} deals that already exist in Supabase")
-                
-                if new_count == 0:
-                    print(f"✅ All deals already exist in Supabase. Nothing to upload.")
+                if len(df_copy) == 0:
                     return True
-                
-                print(f"   ✨ Found {new_count} new deals to upload")
-                
             except Exception as e:
-                print(f"   ⚠️  Error checking existing deals: {e}")
-                print(f"   Proceeding with upload anyway...")
+                print(f"⚠️  Error checking existing deals: {e}")
         
         # Convert DataFrame to list of dictionaries
         # Replace NaN values with None for JSON serialization
@@ -222,7 +197,6 @@ def upload_deals_to_supabase(deals_df, table_name="all_deals", upsert=False, onl
                         # Convert to string to ensure proper serialization
                         deal[key] = str(value) if value is not None else ""
         
-        print(f"📤 Uploading {len(deals_list)} deals to Supabase table '{table_name}'...")
         
         # Insert deals in batches (Supabase has limits on batch size)
         batch_size = 100
@@ -244,10 +218,8 @@ def upload_deals_to_supabase(deals_df, table_name="all_deals", upsert=False, onl
                         conflict_cols = ['company', 'date']
                     
                     response = supabase.table(table_name).upsert(batch, on_conflict=','.join(conflict_cols)).execute()
-                    print(f"   ✅ Upserted batch {i//batch_size + 1} ({len(batch)} deals)")
                 else:
                     response = supabase.table(table_name).insert(batch).execute()
-                    print(f"   ✅ Inserted batch {i//batch_size + 1} ({len(batch)} deals)")
                 
                 total_inserted += len(batch)
             except Exception as e:
@@ -704,7 +676,6 @@ def find_early_stage_deals(all_deals):
     
     # Append new deals to the same master file
     if not new_deals.empty:
-        print(new_deals)
         combined = pd.concat([old_deals, new_deals], ignore_index=True)
         # Use normalized company name for deduplication
         combined['Company_normalized'] = combined['Company'].apply(normalize_company_name)
@@ -712,7 +683,6 @@ def find_early_stage_deals(all_deals):
         combined.drop(columns=['Company_normalized'], inplace=True)
         os.makedirs('data/deal_data', exist_ok=True)
         combined.to_csv('data/deal_data/early_deals.csv', index=False)
-        print(f"Appended {len(new_deals)} new early stage deals to early_deals.csv")
         
         # Upload new early stage deals to Supabase (without founders - they'll be added later)
         # Note: Founders will be extracted and added by add_deals_to_database()
@@ -806,6 +776,9 @@ Return ONLY the name, nothing else. No explanations, no additional text."""
                     elif not all(part[0].isupper() for part in name_parts if part):
                         founder_name = None
                     # Exclude common false positives
+                if founder_name is None:
+                    pass
+                else:
                     name_lower = founder_name.lower()
                     false_positives = [
                         'define ventures', 'general catalyst', 'y combinator', 'sequoia',
@@ -1000,7 +973,8 @@ def add_deals_to_database(new_deals=None, days_back=7):
                 # Update the existing dataframe
                 if 'Founders' not in existing_df.columns:
                     existing_df['Founders'] = ''
-                
+                existing_df['Founders'] = existing_df['Founders'].astype(object)
+
                 # Update founders for matching deals
                 updated_count = 0
                 for idx, row in existing_df.iterrows():
