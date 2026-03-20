@@ -153,64 +153,148 @@ user_category_filters = {
     # Add more users as needed
 }
 
-def is_company_less_than_2_years_old(building_since, max_years=2):
+_US_STATES = {
+    'alabama', 'alaska', 'arizona', 'arkansas', 'california', 'colorado', 'connecticut',
+    'delaware', 'florida', 'georgia', 'hawaii', 'idaho', 'illinois', 'indiana', 'iowa',
+    'kansas', 'kentucky', 'louisiana', 'maine', 'maryland', 'massachusetts', 'michigan',
+    'minnesota', 'mississippi', 'missouri', 'montana', 'nebraska', 'nevada', 'new hampshire',
+    'new jersey', 'new mexico', 'new york', 'north carolina', 'north dakota', 'ohio',
+    'oklahoma', 'oregon', 'pennsylvania', 'rhode island', 'south carolina', 'south dakota',
+    'tennessee', 'texas', 'utah', 'vermont', 'virginia', 'washington', 'west virginia',
+    'wisconsin', 'wyoming', 'district of columbia', 'washington dc', 'puerto rico',
+}
+_US_STATE_ABBREVS = {
+    'al', 'ak', 'az', 'ar', 'ca', 'co', 'ct', 'de', 'fl', 'ga', 'hi', 'id', 'il', 'in',
+    'ia', 'ks', 'ky', 'la', 'me', 'md', 'ma', 'mi', 'mn', 'ms', 'mo', 'mt', 'ne', 'nv',
+    'nh', 'nj', 'nm', 'ny', 'nc', 'nd', 'oh', 'ok', 'or', 'pa', 'ri', 'sc', 'sd', 'tn',
+    'tx', 'ut', 'vt', 'va', 'wa', 'wv', 'wi', 'wy', 'dc',
+}
+
+def is_us_location(location):
+    """Return True if location appears to be in the US, or if location is unknown."""
+    if not location or pd.isna(location):
+        return True  # unknown → let through
+    loc = str(location).lower().strip()
+    if not loc:
+        return True
+    if any(kw in loc for kw in ['united states', ' usa', 'u.s.a', 'u.s.']):
+        return True
+    if any(state in loc for state in _US_STATES):
+        return True
+    # Check state abbreviations as standalone tokens (avoid false positives like "in" matching "indiana")
+    tokens = set(re.split(r'[\s,]+', loc))
+    if tokens & _US_STATE_ABBREVS:
+        return True
+    return False
+
+
+def _parse_date_string(s):
+    """Try to parse a date string in common formats. Returns datetime or None."""
+    if not s:
+        return None
+    s = str(s).strip()
+    if re.match(r'^\d{4}-\d{2}-\d{2}', s):
+        return datetime.strptime(s[:10], '%Y-%m-%d')
+    if re.match(r'^[A-Za-z]+\s+\d{4}', s):
+        for fmt in ['%b %Y', '%B %Y']:
+            try:
+                return datetime.strptime(s, fmt)
+            except ValueError:
+                continue
+    if re.match(r'^\d{4}$', s):
+        return datetime.strptime(s, '%Y')
+    for fmt in ['%Y-%m-%d %H:%M:%S', '%m/%d/%Y', '%d/%m/%Y']:
+        try:
+            return datetime.strptime(s, fmt)
+        except ValueError:
+            continue
+    return None
+
+
+def is_company_less_than_2_years_old(building_since, max_years=2, row=None):
     """
     Check if a company has been building for less than the specified number of years.
-    
+
+    When building_since is missing, falls back to the founder's start date at their
+    current company in all_experiences as a proxy for company age.
+
     Args:
-        building_since: Date string in various formats (YYYY-MM-DD, "Month YYYY", YYYY, etc.) or None
+        building_since: Date string or None
         max_years: Maximum years to consider (default: 2)
-    
+        row: Optional dict/Series with all_experiences and company_name for fallback
+
     Returns:
-        bool: True if company is less than max_years old, False otherwise (or if date is invalid/missing)
+        bool: True if company is less than max_years old, False if too old or positive
+              evidence it is too old; True if age cannot be determined.
     """
-    if pd.isna(building_since) or building_since is None or building_since == '':
-        # If no date available, include it (don't filter out)
-        return True
-    
-    try:
-        building_since_str = str(building_since).strip()
-        date_obj = None
-        
-        # Try to parse as ISO date (YYYY-MM-DD)
-        if re.match(r'^\d{4}-\d{2}-\d{2}', building_since_str):
-            date_obj = datetime.strptime(building_since_str[:10], '%Y-%m-%d')
-        # Try to parse as "Month YYYY" format (e.g., "Dec 2019", "December 2019")
-        elif re.match(r'^[A-Za-z]+\s+\d{4}', building_since_str):
-            # Try abbreviated month first, then full month name
-            for fmt in ['%b %Y', '%B %Y']:
-                try:
-                    date_obj = datetime.strptime(building_since_str, fmt)
-                    break
-                except ValueError:
-                    continue
-        # Try to parse as just year (YYYY)
-        elif re.match(r'^\d{4}$', building_since_str):
-            date_obj = datetime.strptime(building_since_str, '%Y')
-        # Try other common formats
-        else:
-            for fmt in ['%Y-%m-%d', '%Y-%m-%d %H:%M:%S', '%m/%d/%Y', '%d/%m/%Y']:
-                try:
-                    date_obj = datetime.strptime(building_since_str, fmt)
-                    break
-                except ValueError:
-                    continue
-        
-        if date_obj is None:
-            # Could not parse date, include it (don't filter out)
-            return True
-        
-        # Calculate years since that date
-        now = datetime.now()
-        delta = now - date_obj
-        years = delta.days / 365.25
-        
-        # Return True if less than max_years old
-        return years < max_years
-        
-    except (ValueError, TypeError, AttributeError):
-        # If parsing fails, include it (don't filter out)
-        return True
+    now = datetime.now()
+
+    # --- Primary: building_since ---
+    building_since_missing = (
+        building_since is None
+        or (isinstance(building_since, float) and pd.isna(building_since))
+        or str(building_since).strip() == ''
+    )
+
+    if not building_since_missing:
+        try:
+            date_obj = _parse_date_string(str(building_since).strip())
+            if date_obj is not None:
+                return (now - date_obj).days / 365.25 < max_years
+            # Unparseable — fall through to row fallback below
+        except (ValueError, TypeError, AttributeError):
+            pass
+
+    # --- Fallback: founder's start date at current company via all_experiences ---
+    if row is not None:
+        try:
+            all_exp = row.get('all_experiences') if hasattr(row, 'get') else None
+            if all_exp is None or (isinstance(all_exp, float) and pd.isna(all_exp)):
+                return True
+            if isinstance(all_exp, str):
+                all_exp = json.loads(all_exp) if all_exp.strip() else []
+            if not isinstance(all_exp, list) or not all_exp:
+                return True
+
+            company_name = row.get('company_name') if hasattr(row, 'get') else None
+
+            # Find the experience entry for the current company
+            exp = None
+            if company_name and not (isinstance(company_name, float) and pd.isna(company_name)):
+                from services.deal_processing import normalize_company_name
+                target = normalize_company_name(str(company_name))
+                company_index = row.get('company_index') if hasattr(row, 'get') else None
+                if company_index is not None and not (isinstance(company_index, float) and pd.isna(company_index)):
+                    try:
+                        idx = int(company_index)
+                        if 0 <= idx < len(all_exp) and isinstance(all_exp[idx], dict):
+                            exp_name = all_exp[idx].get('company_name') or all_exp[idx].get('company', '')
+                            if normalize_company_name(str(exp_name)) == target:
+                                exp = all_exp[idx]
+                    except (ValueError, TypeError):
+                        pass
+                if exp is None:
+                    for e in all_exp:
+                        if not isinstance(e, dict):
+                            continue
+                        exp_name = e.get('company_name') or e.get('company', '')
+                        if normalize_company_name(str(exp_name)) == target:
+                            exp = e
+                            break
+            else:
+                # No company name — use the most recent experience
+                exp = all_exp[0] if all_exp else None
+
+            if exp and isinstance(exp, dict):
+                start_date_str = exp.get('start_date') or exp.get('startDate') or exp.get('start')
+                date_obj = _parse_date_string(start_date_str)
+                if date_obj is not None:
+                    return (now - date_obj).days / 365.25 < max_years
+        except Exception:
+            pass
+
+    # Cannot determine age — include by default
+    return True
 
 
 def founder_tenure_at_company_less_than_2_years(row, max_years=2):
@@ -493,8 +577,8 @@ def find_new_recs(username, test=True, return_html_only=False):
     if ranker_inference is not None:
         try:
             from test_models import prepare_test_features
-        except ImportError:
-            print("⚠️  Could not import prepare_test_features, skipping ranker")
+        except (ImportError, Exception) as e:
+            print(f"⚠️  Could not import prepare_test_features ({e}), skipping ranker")
             ranker_inference = None
 
     # Load user interests from Supabase (with fallback to JSON)
@@ -1081,7 +1165,7 @@ def _fetch_and_filter_founders():
         AND (latestdealtype IS NULL OR latestdealtype NOT ILIKE 'Series%')
         AND (
             building_since IS NULL OR building_since = ''
-            OR (building_since ~ '^\\d{4}' AND SUBSTRING(building_since FROM 1 FOR 4)::integer >= DATE_PART('year', CURRENT_DATE) - 2)
+            OR (building_since ~ '^\\d{4}' AND SUBSTRING(building_since FROM 1 FOR 4)::integer >= DATE_PART('year', CURRENT_DATE) - 3)
         )
         """, conn)
         new_profiles = new_profiles.drop_duplicates(subset=['name'])
@@ -1093,27 +1177,27 @@ def _fetch_and_filter_founders():
     finally:
         conn.close()
 
-    # Filter out companies that are 2 years or older
+    # Filter out companies that are 3 years or older
     if 'building_since' in new_profiles.columns:
         initial_count = len(new_profiles)
-        new_profiles = new_profiles[new_profiles['building_since'].apply(
-            lambda x: is_company_less_than_2_years_old(x, max_years=2)
+        new_profiles = new_profiles[new_profiles.apply(
+            lambda r: is_company_less_than_2_years_old(r.get('building_since'), max_years=3, row=r), axis=1
         )].copy()
         filtered_count = initial_count - len(new_profiles)
         if filtered_count > 0:
-            print(f"Filtered out {filtered_count} companies that are 2+ years old (remaining: {len(new_profiles)})")
+            print(f"Filtered out {filtered_count} companies that are 3+ years old (remaining: {len(new_profiles)})")
     else:
         print("⚠️  Warning: 'building_since' column not found in database, skipping age filter")
 
-    # Filter to founders with "United States" in location only
+    # Filter to US-based founders (checks state names/abbreviations, not just "United States")
     if 'location' in new_profiles.columns:
         initial_count = len(new_profiles)
         new_profiles = new_profiles[
-            new_profiles['location'].fillna('').astype(str).str.lower().str.contains('united states', na=False)
+            new_profiles['location'].apply(is_us_location)
         ].copy()
         filtered_count = initial_count - len(new_profiles)
         if filtered_count > 0:
-            print(f"Filtered out {filtered_count} founders without United States in location (remaining: {len(new_profiles)})")
+            print(f"Filtered out {filtered_count} non-US founders (remaining: {len(new_profiles)})")
     else:
         print("⚠️  Warning: 'location' column not found in database, skipping location filter")
 
@@ -1188,7 +1272,8 @@ def send_extra_recs(test=True, include_exa=True):
     from services.ranker_inference import rank_profiles
     try:
         from test_models import prepare_test_features
-    except ImportError:
+    except (ImportError, Exception) as e:
+        print(f"⚠️  Could not import prepare_test_features ({e}), ranker will use raw features")
         prepare_test_features = None
 
     # Load ranker-only model (shared loader — no duplicate boilerplate)

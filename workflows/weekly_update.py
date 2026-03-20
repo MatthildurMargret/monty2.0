@@ -3,6 +3,12 @@ import sys
 import os
 import numpy as np
 import warnings
+
+# Ensure project root is on sys.path when run as a subprocess
+_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _root not in sys.path:
+    sys.path.insert(0, _root)
+
 from services.tree_tools import find_pipeline_companies, find_nodes_by_name
 from services.database import get_db_connection
 import pandas as pd
@@ -52,13 +58,6 @@ def get_recent_deals():
     if invalid_dates > 0:
         print(f"  ⚠️  Warning: {invalid_dates} deals have invalid/missing dates (will be excluded)")
     
-    # Debug: Show date range in the file
-    valid_dates = deals[~deals["Date"].isna()]
-    if not valid_dates.empty:
-        print(f"  📅 Date range in file: {valid_dates['Date'].min()} to {valid_dates['Date'].max()}")
-        print(f"  📅 Past week cutoff: {past_week}")
-        print(f"  📅 Deals with valid dates: {len(valid_dates)}")
-    
     # Use >= to include deals from exactly 7 days ago
     deals = deals[deals["Date"] >= past_week].copy()
     after_date_count = len(deals)
@@ -74,8 +73,7 @@ def get_recent_deals():
         deals = deals.drop(columns=["Funding Round Lower"])
         after_series_a_count = len(deals)
         filtered_series_a = before_series_a_filter - after_series_a_count
-        if filtered_series_a > 0:
-            print(f"  Filtered out {filtered_series_a} Series A deals")
+        pass
     
     # Deduplicate by company name (normalized)
     if "Company" in deals.columns and len(deals) > 0:
@@ -87,8 +85,7 @@ def get_recent_deals():
         deals = deals.drop(columns=["Company Normalized"])
         after_dedup_count = len(deals)
         duplicates_removed = before_dedup_count - after_dedup_count
-        if duplicates_removed > 0:
-            print(f"  Removed {duplicates_removed} duplicate companies")
+        pass
     
     print(f"  Deals: {initial_count} total → {after_date_count} in past week → {len(deals)} after filtering")
     
@@ -171,7 +168,6 @@ def _filter_irrelevant_tracking_updates(df):
             response = ask_monty(prompt, data, max_tokens=80)
             parsed = json.loads(response.strip())
             if parsed.get('relevant') is False:
-                print(f"  ✗ Tracking update filtered for {company}: {parsed.get('reason', '')}")
                 keep.append(False)
             else:
                 keep.append(True)
@@ -379,9 +375,10 @@ def get_founders_by_category_path(path, conn=None):
             AND tree_path LIKE %s
             AND (pedigree_passes IS DISTINCT FROM false)
             AND (latestdealtype IS NULL OR latestdealtype NOT ILIKE 'Series%%')
+            AND (company_name IS NULL OR company_name NOT LIKE '%%(YC %%')
             AND (
                 building_since IS NULL OR building_since = ''
-                OR (building_since ~ '^\\d{4}' AND SUBSTRING(building_since FROM 1 FOR 4)::integer >= DATE_PART('year', CURRENT_DATE) - 2)
+                OR (building_since ~ '^\\d{4}' AND SUBSTRING(building_since FROM 1 FOR 4)::integer >= DATE_PART('year', CURRENT_DATE) - 3)
             )
             """,
             ("%" + path + "%",)
@@ -578,10 +575,9 @@ def _pick_top_founder_with_pedigree(ranked_df, full_founders_df):
         if passes:
             return row.to_dict(), pedigree_results
 
-    # None passed — return the top-ranked one anyway so the newsletter isn't empty,
-    # but still persist the pedigree results so failures are recorded.
-    print("    ⚠️  No founder passed pedigree check — using top-ranked as fallback")
-    return ranked_df.iloc[0].to_dict() if not ranked_df.empty else None, pedigree_results
+    # None passed — skip this category entirely.
+    print("    ⚠️  No founder passed pedigree check — skipping category")
+    return None, pedigree_results
 
 
 def _save_weekly_pedigree_results(pedigree_results):
@@ -647,6 +643,8 @@ def get_recs():
     if not db_conn:
         print("⚠️  Failed to open shared DB connection; will fall back to per-path connections")
 
+    all_pedigree_results = []  # Collect across all subcategories, save once at end
+
     try:
         # --------------------------------------------------
         # Iterate categories / subcategories
@@ -687,8 +685,8 @@ def get_recs():
                 if 'building_since' in all_founders_df.columns:
                     before = len(all_founders_df)
                     all_founders_df = all_founders_df[
-                        all_founders_df['building_since'].apply(
-                            lambda x: is_company_less_than_2_years_old(x, max_years=3)
+                        all_founders_df.apply(
+                            lambda r: is_company_less_than_2_years_old(r.get('building_since'), max_years=3, row=r), axis=1
                         )
                     ].reset_index(drop=True)
                     filtered_count = before - len(all_founders_df)
@@ -696,6 +694,17 @@ def get_recs():
                         print(f"    Filtered out {filtered_count} companies older than 3 years (remaining: {len(all_founders_df)})")
                 else:
                     print("    ⚠️  'building_since' column not found, skipping age filter")
+
+                # Filter to US-based founders
+                from workflows.recommendations import is_us_location
+                if 'location' in all_founders_df.columns:
+                    before = len(all_founders_df)
+                    all_founders_df = all_founders_df[
+                        all_founders_df['location'].apply(is_us_location)
+                    ].reset_index(drop=True)
+                    filtered_count = before - len(all_founders_df)
+                    if filtered_count > 0:
+                        print(f"    Filtered out {filtered_count} non-US founders (remaining: {len(all_founders_df)})")
 
                 # Filter out founders estimated to be over 40
                 from workflows.aviato_processing import estimate_founder_age
@@ -728,7 +737,7 @@ def get_recs():
                     ).reset_index(drop=True)
 
                 top_founder, pedigree_results = _pick_top_founder_with_pedigree(ranked, all_founders_df)
-                _save_weekly_pedigree_results(pedigree_results)
+                all_pedigree_results.extend(pedigree_results)
                 sub['top_founder'] = top_founder
                 if top_founder:
                     score = top_founder.get('ranker_score') or top_founder.get('past_success_indication_score', 0)
@@ -760,6 +769,9 @@ def get_recs():
     finally:
         if db_conn:
             db_conn.close()
+
+    # Single batch save for all pedigree results across all subcategories
+    _save_weekly_pedigree_results(all_pedigree_results)
 
     return subcategories, pipeline_dict
 

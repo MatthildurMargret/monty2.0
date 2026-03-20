@@ -630,24 +630,7 @@ def initialize_tracking_csv():
     return tracking_df
 
 def look_for_updates(profile_dict, company_info):
-    # Compare company name
-    if "stealth" not in str(profile_dict['company_name_1']).lower():
-        linkedin_company = profile_dict['company_name_1'].split(' · ')[0]
-        if company_info['company_name'].lower().strip() not in linkedin_company.lower().strip() or linkedin_company.lower().strip() not in company_info['company_name'].lower().strip():
-            if company_info['company_name'].lower().strip() in profile_dict['position_1'].lower().strip():
-                print("Company name matches:")
-                print("Profile: ", linkedin_company)
-                print("Company info: ", company_info['position_1'])
-            else:
-                print("Company name mismatch:")
-                print("Profile: ", linkedin_company)
-                print("Company info: ", company_info['company_name'])
-                print("For reference, here is the profile dict:")
-                print(profile_dict)
-        else:
-            print("Company name matches:")
-            print("Profile: ", linkedin_company)
-            print("Company info: ", company_info['company_name'])
+    pass
 
 def parse_list_for_updates():
     """
@@ -696,11 +679,7 @@ def parse_list_for_updates():
             personal_linkedin = row['personal_linkedin']
             
             if not personal_linkedin or personal_linkedin == "" or str(personal_linkedin) == "nan" or str(personal_linkedin) == "None":
-                print(f"Skipping {name} - No LinkedIn URL provided")
                 continue
-                
-            print(f"Processing {processed_count+1}/{max_profiles}: {name} from {company_name}")
-            print(f"LinkedIn URL: {personal_linkedin}")
             
             # Process the profile with a fresh browser instance each time
             try:
@@ -709,7 +688,6 @@ def parse_list_for_updates():
                 try:
                     profile_dict = process_profile(personal_linkedin, reuse_browser=False)
                 except NameError:
-                    print(f"⚠️  Warning: process_profile() function is not defined. Skipping profile processing.")
                     continue
                 
                 # Check if we got valid profile data
@@ -728,8 +706,7 @@ def parse_list_for_updates():
                         os.makedirs(os.path.dirname(tracking_db_path), exist_ok=True)
                         tracking.to_csv(tracking_db_path, index=False)
                 else:
-                    error_msg = profile_dict if isinstance(profile_dict, str) else "Unknown error"
-                    print(f"Could not retrieve profile data for {name}: {error_msg}")
+                    pass
                 
                 end_time = time.time()
             
@@ -912,19 +889,11 @@ def check_google_alerts(days=4):
         alert_id = alert.get('id')
         
         if not alert_id:
-            print(f"  ⚠️  Alert {i+1} has no ID, skipping...")
             continue
-        
-        # Debug: print first 3 alerts
-        if i < 3:
-            print(f"  Alert {i+1}: Gmail ID={alert_id}, from={alert.get('from', 'N/A')[:50]}")
-        
+
         # Check in Supabase first, then fallback to in-memory set
         in_supabase = check_processed_alert_in_supabase(alert_id)
         in_memory = alert_id in processed_ids
-        
-        if i < 3:
-            print(f"    Check: in_supabase={in_supabase}, in_memory={in_memory}, will_skip={in_supabase or in_memory}")
         
         if in_supabase or in_memory:
             already_processed_count += 1
@@ -999,16 +968,12 @@ def update_tracking_database(tracking_df, relevant_alert):
             matching_indices = []
 
     if not matching_indices:
-        print(f"No matching row found for {relevant_alert['company_name']}")
         return tracking_df
     
     # Update the matching rows with the relevant alert information using .loc
     for idx in matching_indices:
         tracking_df.loc[idx, 'most_recent_update'] = str(relevant_alert['relevance_analysis'])
         tracking_df.loc[idx, 'most_recent_update_link'] = str(relevant_alert['links'][1])
-        print("Added link: ", relevant_alert['links'][1])
-
-    print("Updating ", relevant_alert['company_name'], " with ", relevant_alert['relevance_analysis'])
     return tracking_df
 
 def get_detailed_info_on_alert(link, company_name=None, search_keywords=None):

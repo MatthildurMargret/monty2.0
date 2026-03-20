@@ -643,11 +643,15 @@ def check_founder_pedigree(profile):
         except Exception:
             all_experiences = []
 
-    company_description = profile.get("description_1") or ""
+    # Prefer the enriched product description (shown in newsletter), fall back to raw description_1
+    company_description = profile.get("product") or profile.get("description_1") or ""
 
     # Build a concise experience list — company + position + dates,
     # skip the current founding role (index == company_index)
-    current_idx = profile.get("company_index", 0)
+    try:
+        current_idx = int(profile.get("company_index", 0) or 0)
+    except (ValueError, TypeError):
+        current_idx = 0
     exp_lines = []
     for i, exp in enumerate(all_experiences):
         if i == current_idx:
@@ -664,7 +668,16 @@ def check_founder_pedigree(profile):
         return False, "No prior experience to evaluate"
 
     experience_text = "\n".join(exp_lines)
-    company_text = f"\nCurrent company description: {company_description}" if company_description else ""
+
+    # Always include current company name so Condition 2 can be evaluated even without a description
+    current_exp = all_experiences[current_idx] if current_idx < len(all_experiences) else {}
+    current_company_name = (current_exp.get("company_name") or profile.get("company_name") or "").strip()
+    if company_description:
+        company_text = f"\nCurrent company: {current_company_name}\nCurrent company description: {company_description}"
+    elif current_company_name:
+        company_text = f"\nCurrent company: {current_company_name} (no description available)"
+    else:
+        company_text = ""
 
     prompt = """You are a filter for a seed-stage VC firm evaluating founder backgrounds on two dimensions.
 

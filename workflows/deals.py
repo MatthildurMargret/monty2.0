@@ -506,39 +506,28 @@ def updated_newsletter_deals(days_back=6):
             continue
 
         if ("Venture Daily Digest" in email['from']):
-            print("Processing: Venture Daily Digest")
             email_text = parse_raw_email(email)
             deals = process_daily_digest(email_text)
-            print("Got deals: ", deals)
             all_deals += deals
             processed_email_ids.append(email["id"])
-            
+
         if ("VC News Daily" in email['from']):
-            print("Processing: VC News Daily")
             email_text = parse_raw_email(email)
             deals = process_vcnewsdaily(email_text)
-            print("Got deals: ", deals)
             all_deals += deals
             processed_email_ids.append(email["id"])
 
         elif ("Term Sheet | Fortune" in email['from']):
-            print("Processing: Term Sheet | Fortune")
             email_text = parse_raw_email(email)
             deals = process_fortune_termsheet(email_text)
-            print("Got deals: ", deals)
             all_deals += deals
             processed_email_ids.append(email["id"])
 
         elif ("Fresh Funding & Products" in email['from']):
-            print("Processing: Fresh Funding & Products")
             email_text = parse_raw_email(email)
             deals = process_fresh_funding(email_text)
             all_deals += deals
             processed_email_ids.append(email["id"])
-    
-    # Print deals for debugging
-    for deal in all_deals:
-        print("Deal: ", deal)
     
     # Save deals to CSV
     if all_deals:
@@ -595,16 +584,11 @@ def updated_newsletter_deals(days_back=6):
         # Even if no new deals, sync existing all_deals.csv to Supabase to ensure it's up to date
         master_file = 'data/deal_data/all_deals.csv'
         if os.path.exists(master_file):
-            print("Syncing existing all_deals.csv to Supabase...")
             try:
                 existing_deals_df = pd.read_csv(master_file)
                 if not existing_deals_df.empty:
-                    # Deduplicate before syncing to avoid errors
-                    print(f"  Found {len(existing_deals_df)} deals in CSV")
                     existing_deals_df = existing_deals_df.drop_duplicates(subset=['Company', 'Date'], keep='first')
-                    print(f"  After deduplication: {len(existing_deals_df)} unique deals")
                     upload_deals_to_supabase(existing_deals_df, table_name="all_deals", upsert=True)
-                    print("✅ Synced existing deals to Supabase")
             except Exception as e:
                 print(f"⚠️  Error syncing existing deals: {e}")
         # Update processed emails list for emails we checked (even if no deals found)
@@ -629,7 +613,6 @@ def find_early_stage_deals(all_deals):
     all_deals['Company_normalized'] = all_deals['Company'].apply(normalize_company_name)
     all_deals.drop_duplicates(subset='Company_normalized', inplace=True)
     all_deals.drop(columns=['Company_normalized'], inplace=True)
-    print(all_deals["Company"].unique())
     early_stage_deals = pd.DataFrame(columns=all_deals.columns)
     
     for index, row in all_deals.iterrows():
@@ -944,29 +927,20 @@ def add_deals_to_database(new_deals=None, days_back=7):
                 )
                 
                 if has_existing_founders:
-                    print(f"[{index+1}/{len(deals)}] Skipping {company_name} - already has founders: {existing_founders}")
-                    # Keep existing founders, don't re-process
                     enriched_deals.append(deal_dict)
                     continue
-                
-                print(f"[{index+1}/{len(deals)}] Processing {company_name}")
-                
+
                 # Extract founders using Parallel API
                 if link and pd.notna(link) and str(link).strip() != '':
-                    print(f"  Extracting founders from: {link}")
                     founders = extract_founders_from_link(company_name, link, parallel_client)
-                    
                     if founders:
                         deal_dict["Founders"] = founders
                         deals_with_founders += 1
                         total_founders += len(founders)
-                        print(f"  ✓ Found {len(founders)} founder(s): {', '.join(founders)}")
                     else:
                         deal_dict["Founders"] = []
-                        print(f"  ✗ No founders found")
                 else:
                     deal_dict["Founders"] = []
-                    print(f"  ⚠️  No valid link provided")
                 
                 enriched_deals.append(deal_dict)
                 
@@ -974,7 +948,7 @@ def add_deals_to_database(new_deals=None, days_back=7):
                 time.sleep(1)
                 
             except Exception as e:
-                print(f"  ✗ Error processing deal: {str(e)}")
+                print(f"⚠️  Error processing deal {company_name}: {str(e)}")
                 # Still add the deal even if extraction failed
                 deal_dict = row.to_dict()
                 deal_dict["Founders"] = []

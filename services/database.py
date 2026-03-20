@@ -17,7 +17,7 @@ def get_db_connection():
     """
     try:
         db_url = os.getenv("DATABASE_URL")
-        connection = psycopg2.connect(db_url)
+        connection = psycopg2.connect(db_url, connect_timeout=10)
         return connection
     except Exception as e:
         print(f"Error connecting to PostgreSQL database: {e}")
