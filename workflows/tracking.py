@@ -55,27 +55,31 @@ def get_supabase_client():
 
 def load_tracking_from_supabase():
     """Load tracking database from Supabase.
-    
+
     Returns:
         pandas.DataFrame: DataFrame with tracking data, or empty DataFrame if error
     """
     supabase = get_supabase_client()
     if not supabase:
         return pd.DataFrame()
-    
-    try:
-        response = supabase.table('tracking_db').select('*').execute()
-        if response.data:
-            df = pd.DataFrame(response.data)
-            # Rename co_founder to co-founder for compatibility
-            if 'co_founder' in df.columns:
-                df = df.rename(columns={'co_founder': 'co-founder'})
-            return df
-        else:
+
+    last_err = None
+    for attempt in range(3):
+        try:
+            response = supabase.table('tracking_db').select('*').execute()
+            if response.data:
+                df = pd.DataFrame(response.data)
+                if 'co_founder' in df.columns:
+                    df = df.rename(columns={'co_founder': 'co-founder'})
+                return df
             return pd.DataFrame()
-    except Exception as e:
-        print(f"⚠️  Error loading tracking from Supabase: {e}")
-        return pd.DataFrame()
+        except Exception as e:
+            last_err = e
+            if attempt < 2:
+                time.sleep(3)
+
+    print(f"⚠️  Error loading tracking from Supabase: {last_err}")
+    return pd.DataFrame()
 
 
 def save_tracking_to_supabase(tracking_df):

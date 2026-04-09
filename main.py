@@ -8,9 +8,6 @@ import traceback
 from datetime import datetime
 from dotenv import load_dotenv
 
-# Import async Slack bot
-from services.slack_bot import MontySlackBot
-
 # Import sync workflows
 from workflows.aviato_processing import (
     process_profiles_aviato,
@@ -27,8 +24,9 @@ logger = logging.getLogger("main")
 
 class MontyApp:
     def __init__(self):
-        self.slack_bot = None
         self.cron_thread = None
+        self.discovery_thread = None
+        self._discovery_stop = threading.Event()
         self.running = False
         
     def setup_logging(self):
@@ -62,7 +60,7 @@ class MontyApp:
             setup_aviato_logging()
             
             # Run the full processing pipeline
-            process_profiles_aviato(max_profiles=300)
+            process_profiles_aviato(max_profiles=1000)
             add_monty_data()
             add_tree_analysis()
             
@@ -71,30 +69,20 @@ class MontyApp:
         except Exception as e:
             logger.error(f"Error in aviato processing: {e}")
     
-    def run_discovery(self):
-        """Run the aviato discovery pipeline"""
+    def run_discovery_loop(self):
+        """Persistent discovery thread — runs continuously until stop event is set."""
+        setup_aviato_logging()
+        logger.info("Discovery thread started — running continuously.")
         try:
-            logger.info("Starting aviato discovery...")
-            
-            # Setup aviato-specific logging
-            setup_aviato_logging()
-            
-            # Run discovery to find new founders
-            aviato_discover()
-            
-            logger.info("Aviato discovery completed successfully")
-            
+            aviato_discover(stop_event=self._discovery_stop)
         except Exception as e:
-            logger.error(f"Error in aviato discovery: {e}")
+            logger.error(f"Discovery thread crashed: {e}\n{traceback.format_exc()}")
     
     def schedule_cron_jobs(self):
         """Schedule the cron jobs"""
         # Schedule aviato processing to run daily at 6 AM PDT (13:00 UTC)
         schedule.every().day.at("13:00").do(self.run_aviato_processing)
-        
-        # Schedule discovery to run daily at 10 PM PDT (5 AM UTC next day)
-        schedule.every().day.at("05:00").do(self.run_discovery)
-        
+
         logger.info("Cron jobs scheduled (times adjusted for UTC deployment)")
     
     def run_scheduler(self):
@@ -107,60 +95,41 @@ class MontyApp:
             
         logger.info("Cron scheduler thread stopped")
     
-    async def start_slack_bot(self):
-        """Start the async Slack bot"""
-        try:
-            self.slack_bot = MontySlackBot()
-            logger.info("Starting Slack bot...")
-            await self.slack_bot.start()
-            
-            # Keep the bot running
-            while self.running:
-                await asyncio.sleep(1)
-                
-        except Exception as e:
-            logger.error(f"Error in Slack bot: {e}\n{traceback.format_exc()}")
-        finally:
-            if self.slack_bot:
-                await self.slack_bot.stop()
-    
     async def start(self):
-        """Start both the Slack bot and cron scheduler"""
+        """Start the cron scheduler and continuous discovery"""
         self.setup_logging()
         self.running = True
-        
+
         logger.info("Starting Monty application...")
-        
-        # Schedule cron jobs
+
         self.schedule_cron_jobs()
-        
-        # Start cron scheduler in a separate thread
+
         self.cron_thread = threading.Thread(target=self.run_scheduler, daemon=True)
         self.cron_thread.start()
-        
-        # Run initial aviato processing if requested
+
+        self.discovery_thread = threading.Thread(target=self.run_discovery_loop, daemon=True, name="aviato-discovery")
+        self.discovery_thread.start()
+        logger.info("Continuous discovery thread started.")
+
         if os.getenv("RUN_INITIAL_PROCESSING", "false").lower() == "true":
             logger.info("Running initial aviato processing...")
             await asyncio.get_event_loop().run_in_executor(None, self.run_aviato_processing)
-        
-        # Run initial discovery if requested
-        if os.getenv("RUN_INITIAL_DISCOVERY", "false").lower() == "true":
-            logger.info("Running initial aviato discovery...")
-            await asyncio.get_event_loop().run_in_executor(None, self.run_discovery)
-        
-        # Start Slack bot (this will run indefinitely)
-        await self.start_slack_bot()
+
+        # Keep the app alive
+        while self.running:
+            await asyncio.sleep(60)
     
     async def stop(self):
         """Stop the application gracefully"""
         logger.info("Stopping Monty application...")
         self.running = False
-        
-        if self.slack_bot:
-            await self.slack_bot.stop()
-        
+        self._discovery_stop.set()
+
         if self.cron_thread and self.cron_thread.is_alive():
             self.cron_thread.join(timeout=5)
+
+        if self.discovery_thread and self.discovery_thread.is_alive():
+            self.discovery_thread.join(timeout=30)
 
 # For Railway deployment
 async def main():

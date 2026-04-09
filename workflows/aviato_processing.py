@@ -1480,25 +1480,17 @@ def bool_to_str(value):
     return value
 
 def search_aviato_companies(search_filters):
-    # Base DSL
-    dsl = {
-        "offset": 0,
-        "limit": 10000,
-        "sort": [{"name": "asc"}]  # Default sort
+    PAGE_SIZE = 100  # Safe page size the API can handle
+
+    url = "https://data.api.aviato.co/company/search"
+    headers = {
+        "Authorization": f"Bearer {aviato_api}",
+        "Content-Type": "application/json"
     }
 
-    # Optional: custom sort if provided
-    if "sort" in search_filters:
-        dsl["sort"] = search_filters["sort"]
+    # Build filters once — shared across all pages
+    normal_filters = []
 
-    # Optional: add nameQuery if provided
-    if "nameQuery" in search_filters:
-        dsl["nameQuery"] = search_filters["nameQuery"]
-
-    # Build filters dynamically
-    normal_filters = []   # standard filters that go inside AND
-
-    # --- Normal fields ---
     if "country" in search_filters:
         normal_filters.append({"country": {"operation": "eq", "value": search_filters["country"]}})
     if "region" in search_filters:
@@ -1536,8 +1528,6 @@ def search_aviato_companies(search_filters):
         elif isinstance(founded_value, str) and len(founded_value) == 4 and founded_value.isdigit():
             founded_value = f"{founded_value}-01-01T00:00:00Z"
         normal_filters.append({"founded": {"operation": "gte", "value": founded_value}})
-
-    # Signals
     if "signals" in search_filters:
         signals_value = search_filters["signals"]
         normal_filters.append({
@@ -1546,45 +1536,59 @@ def search_aviato_companies(search_filters):
                 "value": signals_value
             }
         })
-
-    # Latest deal type
     if "latestDealType" in search_filters:
         normal_filters.append({"latestDealType": {"operation": "eq", "value": search_filters["latestDealType"]}})
-
-    # --- Boolean company status fields ---
     if "isStealth" in search_filters:
         normal_filters.append({"isStealth": {"operation": "eq", "value": search_filters["isStealth"]}})
     if "isStartup" in search_filters:
         normal_filters.append({"isStartup": {"operation": "eq", "value": search_filters["isStartup"]}})
 
-    # --- Combine ---
     filters = []
     if normal_filters:
         filters.append({"AND": normal_filters})
 
-    if filters:
-        dsl["filters"] = filters
+    all_items = []
+    offset = 0
 
-    payload = {"dsl": dsl}
+    while True:
+        dsl = {
+            "offset": offset,
+            "limit": PAGE_SIZE,
+            "sort": search_filters.get("sort", [{"name": "asc"}]),
+        }
+        if "nameQuery" in search_filters:
+            dsl["nameQuery"] = search_filters["nameQuery"]
+        if filters:
+            dsl["filters"] = filters
 
-    url = "https://data.api.aviato.co/company/search"
+        _wait_for_search_rate_limit()
 
-    headers = {
-        "Authorization": f"Bearer {aviato_api}",
-        "Content-Type": "application/json"
-    }
+        response = request_with_backoff("POST", url, headers=headers, json={"dsl": dsl})
+        if response is None:
+            logger.error("Company search failed: No response after retries")
+            break
+        if response.status_code != 200:
+            logger.error("Profile search error: %s | %s", response.status_code, response.text[:200])
+            break
 
-    _wait_for_search_rate_limit()
+        data = response.json()
+        items = data.get("items", [])
+        all_items.extend(items)
 
-    response = request_with_backoff("POST", url, headers=headers, json=payload)
-    if response is None:
-        logger.error("Company search failed: No response after retries")
+        total_results = data.get("totalResults", len(all_items))
+        logger.debug("Company search page offset=%d: got %d items (total so far: %d / %d)",
+                     offset, len(items), len(all_items), total_results)
+
+        # Stop if we got fewer than a full page or have collected everything
+        if len(items) < PAGE_SIZE or len(all_items) >= total_results:
+            break
+
+        offset += PAGE_SIZE
+
+    if not all_items:
         return None
-    if response.status_code == 200:
-        return response.json()
-    else:
-        logger.error("Profile search error: %s | %s", response.status_code, response.text[:200])
-        return None
+
+    return {"items": all_items, "totalResults": len(all_items)}
 
 
 def search_aviato_profiles(search_filters):
@@ -1888,18 +1892,32 @@ def find_founder(company_id):
         logger.error("Find founder error: status=%d for company %s", response.status_code, company_id)
         return None
 
-def aviato_search_collect(search_filters, source="aviato_search"):
+def aviato_search_collect(search_filters, source="aviato_search", seen_company_ids=None):
     """
     Collect founder data from Aviato search without inserting to database.
     Returns list of founder dictionaries.
+
+    seen_company_ids: mutable set of company IDs already processed; newly processed IDs
+                      are added to this set in-place so the caller can persist them.
     """
     data = search_aviato_companies(search_filters)
     if not data or "items" not in data:
         logger.warning("No company data returned for search: %s", source)
         return []
-        
+
     ids = [item["id"] for item in data["items"]]
     logger.info("Found %d companies", len(ids))
+
+    if seen_company_ids is not None and len(seen_company_ids) > 0:
+        new_ids = [cid for cid in ids if cid not in seen_company_ids]
+        skipped = len(ids) - len(new_ids)
+        if skipped:
+            logger.info("Skipping %d already-processed companies, %d new to process", skipped, len(new_ids))
+        ids = new_ids
+
+    if not ids:
+        logger.info("No new companies to process for %s", source)
+        return []
     
     companies = enrich_companies(ids)
     relevant = filter_relevant(companies)
@@ -1930,28 +1948,34 @@ def aviato_search_collect(search_filters, source="aviato_search"):
                        idx + 1, len(relevant), 100.0 * (idx + 1) / len(relevant), len(founder_data))
 
         founder = find_founder(company_id)
+
+        # Mark this company as seen regardless of whether it had founders,
+        # so we never re-lookup it on future runs.
+        if seen_company_ids is not None:
+            seen_company_ids.add(company_id)
+
         if not founder or "founders" not in founder:
             continue
-        
+
         founders_list = founder.get("founders", [])
         if len(founders_list) == 0:
             continue
-        
+
         companies_with_founders += 1
-            
+
         for f in founders_list:
             # Skip if no fullName
             if not f.get('fullName'):
                 continue
-                
+
             # Get LinkedIn URL safely
             urls = f.get('URLs', {})
             linkedin_url = urls.get('linkedin', '')
-            
+
             # Skip if no LinkedIn URL
             if not linkedin_url:
                 continue
-            
+
             founder_data.append({
                 'name': f['fullName'],
                 'profile_url': linkedin_url,
@@ -1960,7 +1984,7 @@ def aviato_search_collect(search_filters, source="aviato_search"):
                 'company_name': company_name,
                 'company_url': company_url
             })
-    
+
     logger.info("Collected %d founders from %d companies (%s)", len(founder_data), companies_with_founders, source)
     return founder_data
 
@@ -2025,6 +2049,7 @@ def aviato_search(search_filters, source="aviato_search"):
 
 # Discovery state management
 DISCOVERY_STATE_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "discovery_state.json")
+SEEN_COMPANIES_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "seen_company_ids.json")
 
 def load_discovery_state():
     """Load the last search position from state file."""
@@ -2047,6 +2072,25 @@ def save_discovery_state(state):
     except Exception as e:
         logger.error("Error saving discovery state: %s", e)
 
+def load_seen_company_ids():
+    """Load the set of company IDs we've already processed founder lookups for."""
+    try:
+        if os.path.exists(SEEN_COMPANIES_FILE):
+            with open(SEEN_COMPANIES_FILE, "r") as f:
+                return set(json.load(f))
+    except Exception as e:
+        logger.warning("Error loading seen company IDs: %s. Starting fresh.", e)
+    return set()
+
+def save_seen_company_ids(seen_ids):
+    """Persist the seen company IDs set to disk."""
+    try:
+        os.makedirs(os.path.dirname(SEEN_COMPANIES_FILE), exist_ok=True)
+        with open(SEEN_COMPANIES_FILE, "w") as f:
+            json.dump(list(seen_ids), f)
+    except Exception as e:
+        logger.error("Error saving seen company IDs: %s", e)
+
 def load_all_searches(file_paths):
     """Load all searches from all config files and flatten into a single list with metadata."""
     all_searches = []
@@ -2067,104 +2111,96 @@ def load_all_searches(file_paths):
             continue
     return all_searches
 
-def aviato_discover():
+def aviato_discover(stop_event=None):
+    """
+    Continuously loop through all search configs, collecting founders into search_list.
+    Runs forever until stop_event is set (or the process exits).
+    State is saved after every search so the next run resumes where this one stopped.
+    """
     import time
     from datetime import datetime
-    
-    MAX_RUNTIME_HOURS = 6
-    MAX_RUNTIME_SECONDS = MAX_RUNTIME_HOURS * 3600
-    
+
     total_inserted = 0
     total_searches = 0
-    start_time = time.time()
-    
-    file_paths = ["config/aviato_search_fintech.json", "config/aviato_search_healthcare.json", "config/aviato_search_commerce.json", "config/aviato_search_other.json"]
-    
-    # Load all searches into a flattened list
+
+    file_paths = [
+        "config/aviato_search_fintech.json",
+        "config/aviato_search_healthcare.json",
+        "config/aviato_search_commerce.json",
+        "config/aviato_search_other.json",
+    ]
+
     logger.info("Loading all search configurations...")
     all_searches = load_all_searches(file_paths)
     total_search_count = len(all_searches)
     logger.info("Loaded %d total searches across all config files", total_search_count)
-    
+
     if total_search_count == 0:
         logger.warning("No searches found in config files")
         return
-    
-    # Load state to resume from last position
+
     state = load_discovery_state()
-    start_index = state.get("last_search_index", 0)
+    current_index = state.get("last_search_index", 0)
     cycle = state.get("cycle", 0)
-    
-    logger.info("Resuming discovery from search index %d (cycle %d)", start_index, cycle)
-    
-    # Process searches starting from last position
-    current_index = start_index
+
+    seen_company_ids = load_seen_company_ids()
+    logger.info("Loaded %d previously-seen company IDs", len(seen_company_ids))
+    logger.info("Resuming discovery from search index %d (cycle %d)", current_index, cycle)
+
     searches_processed_this_run = 0
-    
+
     while True:
-        # Check if we've exceeded time limit
-        elapsed_time = time.time() - start_time
-        if elapsed_time >= MAX_RUNTIME_SECONDS:
-            logger.info("Reached 6-hour time limit. Elapsed: %.2f hours. Stopping discovery.", elapsed_time / 3600)
+        if stop_event is not None and stop_event.is_set():
+            logger.info("Discovery stop requested. Stopping after %d searches.", searches_processed_this_run)
             break
-        
-        # Get current search
+
         search_info = all_searches[current_index]
         search_config = search_info["search_config"]
         search_name = search_info["search_name"]
         file_path = search_info["file_path"]
-        
+
         total_searches += 1
         searches_processed_this_run += 1
-        
-        logger.info("[Cycle %d, Search %d/%d] Starting search: %s (from %s)", 
-                   cycle, current_index + 1, total_search_count, search_name, os.path.basename(file_path))
-        logger.info("Time remaining: %.2f hours", (MAX_RUNTIME_SECONDS - elapsed_time) / 3600)
-        
+
+        logger.info("[Cycle %d, Search %d/%d] Starting search: %s (from %s)",
+                    cycle, current_index + 1, total_search_count, search_name, os.path.basename(file_path))
+
         try:
-            # Collect founder data for this search
-            founder_data = aviato_search_collect(search_config.get("filter", {}), search_config.get("source", "aviato_search"))
-            
+            founder_data = aviato_search_collect(
+                search_config.get("filter", {}),
+                search_config.get("source", "aviato_search"),
+                seen_company_ids=seen_company_ids,
+            )
+
             if founder_data:
-                # Convert to DataFrame and insert immediately
                 df = pd.DataFrame(founder_data)
                 logger.info("Inserting %d founders from %s search", len(df), search_name)
-                
                 success = insert_search_results(df, table_name="search_list")
                 if success:
                     total_inserted += len(df)
-                    logger.info("Successfully inserted %d founders from %s. Total so far: %d", len(df), search_name, total_inserted)
+                    logger.info("Successfully inserted %d founders from %s. Total so far: %d",
+                                len(df), search_name, total_inserted)
                 else:
                     logger.error("Failed to insert founder data from %s search", search_name)
             else:
                 logger.info("No founder data collected from %s search", search_name)
         except Exception as e:
             logger.error("Error processing search %s: %s", search_name, e, exc_info=True)
-        
-        # Move to next search
+
         current_index += 1
-        
-        # Check if we've completed all searches (circular logic)
         if current_index >= total_search_count:
-            completed_full_cycle = True
             cycle += 1
-            current_index = 0  # Loop back to beginning
-            logger.info("Completed all searches. Starting cycle %d from beginning...", cycle)
-        
-        # Save state after each search (so we can resume if interrupted)
+            current_index = 0
+            logger.info("Completed full cycle. Starting cycle %d from beginning...", cycle)
+
         state = {
             "last_search_index": current_index,
             "cycle": cycle,
             "last_updated": datetime.now().isoformat(),
-            "total_searches_processed": searches_processed_this_run
+            "total_searches_processed": searches_processed_this_run,
         }
         save_discovery_state(state)
-        
-        # Check time again before continuing (in case the last search took a long time)
-        elapsed_time = time.time() - start_time
-        if elapsed_time >= MAX_RUNTIME_SECONDS:
-            logger.info("Reached 6-hour time limit after search. Stopping discovery.")
-            break
+        save_seen_company_ids(seen_company_ids)
     
     logger.info("Discovery complete. Processed %d searches in this run. Total founders inserted: %d", 
                searches_processed_this_run, total_inserted)
