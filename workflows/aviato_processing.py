@@ -1479,7 +1479,7 @@ def bool_to_str(value):
         return str(value).lower()  # "true" or "false"
     return value
 
-def search_aviato_companies(search_filters):
+def search_aviato_companies(search_filters, max_items=10000):
     PAGE_SIZE = 100  # Safe page size the API can handle
 
     url = "https://data.api.aviato.co/company/search"
@@ -1512,7 +1512,7 @@ def search_aviato_companies(search_filters):
     if "locationIDList" in search_filters:
         normal_filters.append({"locationIDList": {"operation": "in", "value": search_filters["locationIDList"]}})
     if "industryList" in search_filters:
-        normal_filters.append({"industryList": {"operation": "in", "value": search_filters["industryList"]}})
+        normal_filters.append({"industryList": {"operation": "in", "value": search_filters["industryList"], "quantifier": "some"}})
     if "website" in search_filters:
         normal_filters.append({"website": {"operation": "eq", "value": search_filters["website"]}})
     if "linkedin" in search_filters:
@@ -1543,9 +1543,8 @@ def search_aviato_companies(search_filters):
     if "isStartup" in search_filters:
         normal_filters.append({"isStartup": {"operation": "eq", "value": search_filters["isStartup"]}})
 
-    filters = []
-    if normal_filters:
-        filters.append({"AND": normal_filters})
+    # Filters are a flat array — no AND/OR wrapper
+    filters = normal_filters
 
     all_items = []
     offset = 0
@@ -1554,16 +1553,20 @@ def search_aviato_companies(search_filters):
         dsl = {
             "offset": offset,
             "limit": PAGE_SIZE,
-            "sort": search_filters.get("sort", [{"name": "asc"}]),
         }
+        if "sort" in search_filters:
+            dsl["sort"] = search_filters["sort"]
         if "nameQuery" in search_filters:
             dsl["nameQuery"] = search_filters["nameQuery"]
         if filters:
             dsl["filters"] = filters
 
+        payload = {"dsl": dsl}
+        logger.debug("Company search payload: %s", payload)
+
         _wait_for_search_rate_limit()
 
-        response = request_with_backoff("POST", url, headers=headers, json={"dsl": dsl})
+        response = request_with_backoff("POST", url, headers=headers, json=payload)
         if response is None:
             logger.error("Company search failed: No response after retries")
             break
@@ -1575,12 +1578,15 @@ def search_aviato_companies(search_filters):
         items = data.get("items", [])
         all_items.extend(items)
 
-        total_results = data.get("totalResults", len(all_items))
+        try:
+            total_results = int(data.get("count", {}).get("value", 0))
+        except (TypeError, ValueError):
+            total_results = 0
         logger.debug("Company search page offset=%d: got %d items (total so far: %d / %d)",
                      offset, len(items), len(all_items), total_results)
 
-        # Stop if we got fewer than a full page or have collected everything
-        if len(items) < PAGE_SIZE or len(all_items) >= total_results:
+        # Stop if we got fewer than a full page, collected everything, or hit the cap
+        if len(items) < PAGE_SIZE or (total_results > 0 and len(all_items) >= total_results) or len(all_items) >= max_items:
             break
 
         offset += PAGE_SIZE
