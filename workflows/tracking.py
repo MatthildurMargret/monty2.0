@@ -78,7 +78,10 @@ def load_tracking_from_supabase():
             if attempt < 2:
                 time.sleep(3)
 
+    supabase_url = os.getenv("SUPABASE_URL", "NOT SET")
+    masked_url = supabase_url[:30] + "..." if len(supabase_url) > 30 else supabase_url
     print(f"⚠️  Error loading tracking from Supabase: {last_err}")
+    print(f"    SUPABASE_URL: {masked_url}")
     return pd.DataFrame()
 
 
@@ -126,9 +129,23 @@ def save_tracking_to_supabase(tracking_df):
             
             df_copy['page_links'] = df_copy['page_links'].apply(parse_page_links)
         
-        # Convert DataFrame to list of dictionaries
-        # Replace NaN values with None for JSON serialization
-        records = df_copy.where(pd.notna(df_copy), None).to_dict('records')
+        # Drop duplicate columns (keeps first occurrence)
+        df_copy = df_copy.loc[:, ~df_copy.columns.duplicated()]
+
+        # Convert DataFrame to list of dicts, replacing all NaN/inf with None
+        import math
+        raw_records = df_copy.to_dict('records')
+        records = []
+        for row in raw_records:
+            clean = {}
+            for k, v in row.items():
+                if v is None:
+                    clean[k] = None
+                elif isinstance(v, float) and (math.isnan(v) or math.isinf(v)):
+                    clean[k] = None
+                else:
+                    clean[k] = v
+            records.append(clean)
         
         # Ensure all required columns exist and handle None values
         for record in records:
@@ -174,7 +191,7 @@ def save_tracking_to_supabase(tracking_df):
                 print(f"   ❌ Error upserting batch {i//batch_size + 1}: {e}")
         
         print(f"✅ Successfully upserted {total_upserted} records to tracking_db table")
-        return True
+        return total_upserted > 0
         
     except Exception as e:
         print(f"❌ Error saving tracking to Supabase: {e}")
