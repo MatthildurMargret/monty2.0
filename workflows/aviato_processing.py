@@ -1474,6 +1474,84 @@ def add_tree_analysis():
     from services.tree import test_tree
     test_tree()
 
+def run_pedigree_batch(batch_size=300):
+    """
+    Run pedigree checks on a batch of founders that haven't been checked yet.
+    Meant to run daily so recommendations always draw from a pre-vetted pool.
+    """
+    from services.database import get_db_connection
+
+    conn = get_db_connection()
+    if not conn:
+        logger.error("run_pedigree_batch: failed to connect to database")
+        return
+
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT * FROM founders
+            WHERE founder = true
+            AND pedigree_passes IS NULL
+            AND all_experiences IS NOT NULL
+            AND verticals IS NOT NULL
+            ORDER BY id DESC
+            LIMIT %s
+        """, (batch_size,))
+        rows = cursor.fetchall()
+        column_names = [desc[0] for desc in cursor.description]
+    except Exception as e:
+        logger.error("run_pedigree_batch: error fetching profiles: %s", e)
+        return
+    finally:
+        cursor.close()
+        conn.close()
+
+    if not rows:
+        logger.info("run_pedigree_batch: no unchecked profiles found")
+        return
+
+    logger.info("run_pedigree_batch: checking pedigree for %d profiles", len(rows))
+
+    passed = 0
+    failed = 0
+    errors = 0
+
+    for row in rows:
+        profile = dict(zip(column_names, row))
+        try:
+            passes, reason = check_founder_pedigree(profile)
+        except Exception as e:
+            logger.warning("run_pedigree_batch: error checking %s: %s", profile.get("name"), e)
+            errors += 1
+            continue
+
+        conn = get_db_connection()
+        if not conn:
+            continue
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE founders SET pedigree_passes = %s, pedigree_reason = %s WHERE profile_url = %s",
+                (passes, reason, profile["profile_url"])
+            )
+            if not passes:
+                cursor.execute(
+                    "UPDATE founders SET history = 'pedigree_fail' WHERE profile_url = %s AND history = ''",
+                    (profile["profile_url"],)
+                )
+                failed += 1
+            else:
+                passed += 1
+            conn.commit()
+        except Exception as e:
+            logger.warning("run_pedigree_batch: error saving result for %s: %s", profile.get("name"), e)
+            conn.rollback()
+        finally:
+            cursor.close()
+            conn.close()
+
+    logger.info("run_pedigree_batch: done — passed=%d, failed=%d, errors=%d", passed, failed, errors)
+
 def bool_to_str(value):
     if isinstance(value, bool):
         return str(value).lower()  # "true" or "false"

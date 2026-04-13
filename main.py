@@ -14,6 +14,7 @@ from workflows.aviato_processing import (
     add_monty_data,
     add_tree_analysis,
     aviato_discover,
+    run_pedigree_batch,
     setup_logging as setup_aviato_logging
 )
 
@@ -63,6 +64,7 @@ class MontyApp:
             process_profiles_aviato(max_profiles=1000)
             add_monty_data()
             add_tree_analysis()
+            run_pedigree_batch(batch_size=300)
             
             logger.info("Aviato processing pipeline completed successfully")
             
