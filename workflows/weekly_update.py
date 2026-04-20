@@ -327,7 +327,7 @@ def find_relevant_information(pipeline_dict):
     
     # Only process Healthcare, Fintech, and Commerce categories for the weekly update
     # Filter to only the categories that will be displayed
-    allowed_categories = ['Healthcare', 'Fintech', 'Commerce']
+    allowed_categories = ['Healthcare', 'Fintech', 'Commerce', 'AI']
     filtered_subcategories = {
         category: subs 
         for category, subs in subcategories.items() 
@@ -655,10 +655,12 @@ def get_recs():
             for sub in subs:
                 print(f"  Subcategory: {sub['subcategory']} ({sub['count']} companies)")
 
-                # Map taxonomy
+                # Map taxonomy — always include the new subcategory name as a search pattern
+                # so founders with new-style tree_paths in the DB are found directly,
+                # in addition to any old paths from the pre-restructure taxonomy.
                 new_path = sub['subcategory']
                 old_paths = get_all_matching_old_paths(new_path)
-                mapped_paths = old_paths if old_paths else [new_path]
+                mapped_paths = list(dict.fromkeys(old_paths + [new_path]))
 
                 # Load founders (reuse shared connection)
                 founders_list = []
@@ -706,15 +708,16 @@ def get_recs():
                     if filtered_count > 0:
                         print(f"    Filtered out {filtered_count} non-US founders (remaining: {len(all_founders_df)})")
 
-                # Filter out founders estimated to be over 40
+                # Filter out founders estimated to be over 45
+                # (cutoff is 45 not 40 to account for ~3-year estimation error from early internships)
                 from workflows.aviato_processing import estimate_founder_age
                 before = len(all_founders_df)
                 all_founders_df = all_founders_df[
-                    all_founders_df.apply(lambda r: (estimate_founder_age(r.to_dict()) or 0) <= 40, axis=1)
+                    all_founders_df.apply(lambda r: (estimate_founder_age(r.to_dict()) or 0) <= 45, axis=1)
                 ].reset_index(drop=True)
                 filtered_count = before - len(all_founders_df)
                 if filtered_count > 0:
-                    print(f"    Filtered out {filtered_count} founders estimated over 40 (remaining: {len(all_founders_df)})")
+                    print(f"    Filtered out {filtered_count} founders estimated over 45 (remaining: {len(all_founders_df)})")
 
                 if all_founders_df.empty:
                     sub['top_founder'] = None

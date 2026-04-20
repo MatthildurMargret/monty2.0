@@ -527,8 +527,8 @@ def estimate_founder_age(profile):
     if earliest_year is None:
         return None
 
-    # Assume first substantive role starts around age 22
-    estimated_birth_year = earliest_year - 22
+    # Assume first substantive role starts around age 23 (accounts for early internships)
+    estimated_birth_year = earliest_year - 23
     return current_year - estimated_birth_year
 
 
