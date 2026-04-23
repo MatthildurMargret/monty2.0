@@ -615,168 +615,289 @@ def _save_weekly_pedigree_results(pedigree_results):
         conn.close()
 
 
+# --------------------------------------------------
+# Sourcing constants
+# --------------------------------------------------
+_SOURCING_STATUS_PRIORITY = {
+    "Very high":      5,
+    "High":           4,
+    "High/moderate":  3,
+    "Moderate/high":  2,
+    "Medium":         1,
+    "medium":         1,
+    # "New" intentionally omitted — excluded from sourcing
+}
+_SOURCING_PIPELINE_PRIORITY = 0  # pipeline-only paths checked last
+_SOURCING_CATEGORIES = ["Fintech", "Healthcare", "Commerce", "AI"]
+_SOURCING_TARGET_PER_CATEGORY = 5
+_SOURCING_PEDIGREE_BUDGET_PER_CATEGORY = 30
+
+
+def _sourcing_build_path_priority_map(tree):
+    """Return {node_name: priority} for every taste-tree node with a relevant investment_status."""
+    mapping = {}
+
+    def walk(node):
+        for name, child in node.items():
+            if not isinstance(child, dict):
+                continue
+            status = (child.get("meta", {}).get("investment_status") or "").strip()
+            priority = _SOURCING_STATUS_PRIORITY.get(status, 0)
+            if priority > 0:
+                if mapping.get(name, -1) < priority:
+                    mapping[name] = priority
+            if "children" in child:
+                walk(child["children"])
+
+    walk(tree)
+    return mapping
+
+
+def _sourcing_build_combined_patterns(pipeline_dict, priority_map):
+    """Union of pipeline subcategory names and interest-status node names."""
+    allowed = {"Healthcare", "Fintech", "Commerce", "AI"}
+    combined = dict(priority_map)  # interest-status entries
+
+    for category, subs in pipeline_dict["subcategories_by_category"].items():
+        if category not in allowed:
+            continue
+        for sub in subs:
+            name = sub.get("subcategory")
+            if name and pd.notna(name):
+                # Pipeline paths only upgrade to PIPELINE_PRIORITY if not already higher
+                if combined.get(name, -1) < _SOURCING_PIPELINE_PRIORITY:
+                    combined[name] = _SOURCING_PIPELINE_PRIORITY
+
+    return combined  # {node_name: priority}
+
+
+def _sourcing_fetch_candidates(conn):
+    """Fetch all basic-filter candidates from the DB (no tree_path constraint)."""
+    return pd.read_sql(
+        """
+        SELECT *
+        FROM founders
+        WHERE founder = true
+        AND history = ''
+        AND (pedigree_passes IS DISTINCT FROM false)
+        AND (latestdealtype IS NULL OR latestdealtype NOT ILIKE 'Series%%')
+        AND (company_name IS NULL OR company_name NOT LIKE '%%(YC %%')
+        AND (
+            building_since IS NULL OR building_since = ''
+            OR (
+                building_since ~ '^\\d{4}'
+                AND SUBSTRING(building_since FROM 1 FOR 4)::integer
+                    >= DATE_PART('year', CURRENT_DATE) - 3
+            )
+        )
+        """,
+        conn,
+    )
+
+
+def _sourcing_filter_and_score(df, combined_patterns):
+    """Keep only rows whose tree_path contains a known pattern; attach priority score."""
+    if df.empty or "tree_path" not in df.columns:
+        return df
+
+    def best_priority(tree_path):
+        if not tree_path or (isinstance(tree_path, float) and pd.isna(tree_path)):
+            return -1
+        tp = str(tree_path)
+        best = -1
+        for pattern, priority in combined_patterns.items():
+            if pattern in tp and priority > best:
+                best = priority
+        return best
+
+    df = df.copy()
+    df["_interest_priority"] = df["tree_path"].apply(best_priority)
+    before = len(df)
+    df = df[df["_interest_priority"] >= 0].reset_index(drop=True)
+    print(f"  Path filter: {before} → {len(df)} founders matching pipeline or High/Medium paths")
+    return df
+
+
+def _sourcing_quality_filters(df):
+    """Dedup + location + tenure + title + age filters."""
+    from workflows.recommendations import (
+        is_us_location,
+        founder_tenure_at_company_less_than_2_years,
+        is_founder_or_cofounder_at_current_company,
+        is_company_less_than_2_years_old,
+    )
+    from workflows.aviato_processing import estimate_founder_age
+
+    df = df.drop_duplicates(subset=["name"]).reset_index(drop=True)
+    df = df.drop_duplicates(subset=["company_name"]).reset_index(drop=True)
+    df = df.drop_duplicates(subset=["profile_url"]).reset_index(drop=True)
+
+    if "building_since" in df.columns:
+        df = df[df.apply(
+            lambda r: is_company_less_than_2_years_old(r.get("building_since"), max_years=3, row=r), axis=1
+        )].reset_index(drop=True)
+
+    if "location" in df.columns:
+        df = df[df["location"].apply(is_us_location)].reset_index(drop=True)
+
+    if "all_experiences" in df.columns:
+        df = df[df.apply(
+            lambda r: founder_tenure_at_company_less_than_2_years(r, max_years=2), axis=1
+        )].reset_index(drop=True)
+
+    df = df[df.apply(is_founder_or_cofounder_at_current_company, axis=1)].reset_index(drop=True)
+
+    df = df[df.apply(
+        lambda r: (estimate_founder_age(r.to_dict()) or 0) <= 45, axis=1
+    )].reset_index(drop=True)
+
+    print(f"  After quality filters: {len(df)} candidates")
+    return df
+
+
+def _sourcing_collect_by_category(df):
+    """For each high-level category, sweep its candidates sorted by interest priority
+    and pedigree-check until 5 pass (or budget exhausted).
+
+    Returns (flat list of all passing founders, pedigree_log).
+    """
+    from workflows.aviato_processing import check_founder_pedigree
+
+    if "_interest_priority" in df.columns:
+        df = df.sort_values("_interest_priority", ascending=False).reset_index(drop=True)
+
+    all_passing = []
+    all_pedigree_log = []
+
+    for category in _SOURCING_CATEGORIES:
+        cat_mask = df["tree_path"].apply(
+            lambda tp: str(tp).split(">")[0].strip() == category
+            if tp and not (isinstance(tp, float)) else False
+        )
+        cat_df = df[cat_mask].reset_index(drop=True)
+
+        if cat_df.empty:
+            print(f"  {category}: no candidates after path filter")
+            continue
+
+        print(f"  {category}: {len(cat_df)} candidates — checking pedigree")
+        passing = []
+        checked = 0
+
+        for _, row in cat_df.iterrows():
+            if len(passing) >= _SOURCING_TARGET_PER_CATEGORY:
+                break
+            if checked >= _SOURCING_PEDIGREE_BUDGET_PER_CATEGORY:
+                print(f"    ⚠️  {category}: pedigree budget ({_SOURCING_PEDIGREE_BUDGET_PER_CATEGORY}) reached")
+                break
+
+            profile_data = row.to_dict()
+            profile_url = profile_data.get("profile_url", "")
+            name = profile_data.get("name", "unknown")
+
+            passes, reason = check_founder_pedigree(profile_data)
+            checked += 1
+            all_pedigree_log.append((profile_url, passes, reason))
+
+            status = "✅" if passes else "❌"
+            print(f"    [{checked:>2}] {status}  {name:<30}  — {reason[:70]}")
+
+            if passes:
+                profile_data["pedigree_reason"] = reason
+                passing.append(profile_data)
+
+        print(f"  {category}: {len(passing)}/{_SOURCING_TARGET_PER_CATEGORY} founders passed ({checked} checked)")
+        all_passing.extend(passing)
+
+    return all_passing, all_pedigree_log
+
+
+def _sourcing_build_recs(passing_founders, tree, pipeline_dict):
+    """Organise a flat list of passing founders into the recs dict the HTML generator expects.
+
+    Each founder becomes its own subcategory entry (one card per founder).
+    Category and subcategory are inferred from tree_path.
+    """
+    allowed_categories = {"Healthcare", "Fintech", "Commerce", "AI"}
+    filter_date = (datetime.now() - timedelta(days=180)).strftime("%Y-%m-%d")
+    recs = {}
+
+    for founder in passing_founders:
+        tree_path = founder.get("tree_path") or ""
+        segments = [s.strip() for s in str(tree_path).split(">")]
+        category = segments[0] if segments else "Other"
+        subcategory = segments[1] if len(segments) > 1 else (segments[0] if segments else "General")
+
+        # Keep only allowed categories for the newsletter layout
+        if category not in allowed_categories:
+            category = "Other"
+
+        # Look up interest text
+        interest_text = ""
+        try:
+            nodes = find_nodes_by_name(tree, subcategory)
+            for node in nodes:
+                val = node.get("meta", {}).get("interest", "")
+                if isinstance(val, str) and val.strip():
+                    interest_text = val.strip()
+                    break
+        except Exception:
+            pass
+
+        # Look up deal activity
+        deal_activity = get_relevant_deals(subcategory, tree, filter_date=filter_date)
+
+        sub_entry = {
+            "subcategory": subcategory,
+            "count": 0,
+            "top_founder": founder,
+            "deal_activity": deal_activity,
+            "interest": interest_text,
+        }
+
+        recs.setdefault(category, []).append(sub_entry)
+
+    return recs
+
+
 def get_recs():
     with open('data/taste_tree.json', 'r') as f:
         tree = json.load(f)
 
     pipeline_dict = get_pipeline_stats()
-    subcategories = find_relevant_information(pipeline_dict)
 
-    # --------------------------------------------------
-    # Load ranker model (shared loader)
-    # --------------------------------------------------
-    ranker_inference = load_ranker_model()
+    print("  Building path patterns (pipeline + High/Medium interest)...")
+    priority_map = _sourcing_build_path_priority_map(tree)
+    combined_patterns = _sourcing_build_combined_patterns(pipeline_dict, priority_map)
+    print(f"  Combined patterns: {len(combined_patterns)} node names")
 
-    # Pre-load prepare_test_features so we don't re-import per subcategory
-    prepare_test_features = None
-    if ranker_inference is not None:
-        try:
-            from test_models import prepare_test_features
-        except ImportError:
-            print("⚠️  Could not import prepare_test_features from test_models")
-            ranker_inference = None
-
-    # --------------------------------------------------
-    # Open a single shared DB connection for all category queries
-    # --------------------------------------------------
     db_conn = get_db_connection()
     if not db_conn:
-        print("⚠️  Failed to open shared DB connection; will fall back to per-path connections")
-
-    all_pedigree_results = []  # Collect across all subcategories, save once at end
+        print("❌ Failed to connect to database for sourcing")
+        return {}, pipeline_dict
 
     try:
-        # --------------------------------------------------
-        # Iterate categories / subcategories
-        # --------------------------------------------------
-        for category, subs in subcategories.items():
-            print(f"Category: {category}")
-
-            for sub in subs:
-                print(f"  Subcategory: {sub['subcategory']} ({sub['count']} companies)")
-
-                # Map taxonomy — always include the new subcategory name as a search pattern
-                # so founders with new-style tree_paths in the DB are found directly,
-                # in addition to any old paths from the pre-restructure taxonomy.
-                new_path = sub['subcategory']
-                old_paths = get_all_matching_old_paths(new_path)
-                mapped_paths = list(dict.fromkeys(old_paths + [new_path]))
-
-                # Load founders (reuse shared connection)
-                founders_list = []
-                for path in mapped_paths:
-                    df = get_founders_by_category_path(path, conn=db_conn)
-                    if not df.empty:
-                        founders_list.append(df)
-
-                if not founders_list:
-                    sub['top_founder'] = None
-                    continue
-
-                with warnings.catch_warnings():
-                    warnings.filterwarnings('ignore', category=FutureWarning)
-                    all_founders_df = pd.concat(founders_list, ignore_index=True)
-
-                all_founders_df = (
-                    all_founders_df
-                    .drop_duplicates(subset=['name', 'company_name'])
-                    .reset_index(drop=True)
-                )
-
-                # Filter out companies older than 3 years (same logic as recommendations.py)
-                if 'building_since' in all_founders_df.columns:
-                    before = len(all_founders_df)
-                    all_founders_df = all_founders_df[
-                        all_founders_df.apply(
-                            lambda r: is_company_less_than_2_years_old(r.get('building_since'), max_years=3, row=r), axis=1
-                        )
-                    ].reset_index(drop=True)
-                    filtered_count = before - len(all_founders_df)
-                    if filtered_count > 0:
-                        print(f"    Filtered out {filtered_count} companies older than 3 years (remaining: {len(all_founders_df)})")
-                else:
-                    print("    ⚠️  'building_since' column not found, skipping age filter")
-
-                # Filter to US-based founders
-                from workflows.recommendations import is_us_location
-                if 'location' in all_founders_df.columns:
-                    before = len(all_founders_df)
-                    all_founders_df = all_founders_df[
-                        all_founders_df['location'].apply(is_us_location)
-                    ].reset_index(drop=True)
-                    filtered_count = before - len(all_founders_df)
-                    if filtered_count > 0:
-                        print(f"    Filtered out {filtered_count} non-US founders (remaining: {len(all_founders_df)})")
-
-                # Filter out founders estimated to be over 45
-                # (cutoff is 45 not 40 to account for ~3-year estimation error from early internships)
-                from workflows.aviato_processing import estimate_founder_age
-                before = len(all_founders_df)
-                all_founders_df = all_founders_df[
-                    all_founders_df.apply(lambda r: (estimate_founder_age(r.to_dict()) or 0) <= 45, axis=1)
-                ].reset_index(drop=True)
-                filtered_count = before - len(all_founders_df)
-                if filtered_count > 0:
-                    print(f"    Filtered out {filtered_count} founders estimated over 45 (remaining: {len(all_founders_df)})")
-
-                if all_founders_df.empty:
-                    sub['top_founder'] = None
-                    continue
-
-                print(f"    Found {len(all_founders_df)} founders")
-
-                # --------------------------------------------------
-                # Rank with model (or fallback), then pedigree check
-                # --------------------------------------------------
-                if ranker_inference is not None:
-                    ranked = rank_profiles(all_founders_df, ranker_inference, prepare_test_features)
-                    if 'ranker_score' not in ranked.columns:
-                        ranked = all_founders_df.sort_values(
-                            by='past_success_indication_score', ascending=False
-                        ).reset_index(drop=True)
-                else:
-                    ranked = all_founders_df.sort_values(
-                        by='past_success_indication_score', ascending=False
-                    ).reset_index(drop=True)
-
-                top_founder, pedigree_results = _pick_top_founder_with_pedigree(ranked, all_founders_df)
-                all_pedigree_results.extend(pedigree_results)
-                sub['top_founder'] = top_founder
-                if top_founder:
-                    score = top_founder.get('ranker_score') or top_founder.get('past_success_indication_score', 0)
-                    print(f"    Selected top founder: {top_founder.get('name', 'unknown')} (score={score:.4f})")
-
-                # --------------------------------------------------
-                # Deal activity + interest
-                # --------------------------------------------------
-                sub['deal_activity'] = get_relevant_deals(
-                    sub['subcategory'],
-                    tree,
-                    filter_date=(datetime.now() - timedelta(days=180)).strftime("%Y-%m-%d")
-                )
-
-                interest_text = ""
-                try:
-                    nodes = find_nodes_by_name(tree, sub['subcategory'])
-                    for node in nodes:
-                        meta = node.get('meta', {})
-                        val = meta.get('interest', '')
-                        if isinstance(val, str) and val.strip():
-                            interest_text = val.strip()
-                            break
-                except Exception:
-                    pass
-
-                sub['interest'] = interest_text
-
+        print("  Fetching candidates from DB...")
+        raw_df = _sourcing_fetch_candidates(db_conn)
+        print(f"  Raw candidates: {len(raw_df)}")
     finally:
-        if db_conn:
-            db_conn.close()
+        db_conn.close()
 
-    # Single batch save for all pedigree results across all subcategories
-    _save_weekly_pedigree_results(all_pedigree_results)
+    scored_df = _sourcing_filter_and_score(raw_df, combined_patterns)
+    filtered_df = _sourcing_quality_filters(scored_df)
 
-    return subcategories, pipeline_dict
+    if filtered_df.empty:
+        print("  No candidates after filtering — sourcing section will be empty")
+        return {}, pipeline_dict
+
+    passing_founders, pedigree_log = _sourcing_collect_by_category(filtered_df)
+    _save_weekly_pedigree_results(pedigree_log)
+
+    recs = _sourcing_build_recs(passing_founders, tree, pipeline_dict)
+    total = sum(len(v) for v in recs.values())
+    print(f"  Sourcing complete: {total} founders across {len(recs)} categories")
+
+    return recs, pipeline_dict
 
 
 # Collect founders and companies that will be shown in the newsletter's recommendations

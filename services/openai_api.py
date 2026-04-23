@@ -1,4 +1,5 @@
 from openai import OpenAI
+import anthropic
 import os
 from dotenv import load_dotenv
 import json
@@ -7,31 +8,30 @@ import re
 # Load environment variables
 load_dotenv()
 
-# Get OpenAI API key from environment variables
+# Get API keys from environment variables
 openai_api_key = os.getenv("OPENAI_API_KEY")
+claude_api_key = os.getenv("CLAUDE_API_KEY")
 
 def ask_monty(prompt, data, max_tokens=1000, model=None):
     """
-    Call OpenAI chat completion.
+    Call Claude chat completion.
 
     Args:
         prompt: System message / instructions.
         data: User message / input data.
         max_tokens: Maximum tokens in the response.
-        model: Model name (e.g. 'gpt-4o', 'gpt-4o-mini'). If None, uses gpt-4o-mini.
+        model: Model name. If None, uses claude-haiku-4-5-20251001.
     """
     if model is None:
-        model = "gpt-4o-mini"
-    client = OpenAI(api_key=openai_api_key)
-    response = client.chat.completions.create(
+        model = "claude-haiku-4-5-20251001"
+    client = anthropic.Anthropic(api_key=claude_api_key)
+    response = client.messages.create(
         model=model,
-        messages=[
-            {"role": "system", "content": prompt},
-            {"role": "user", "content": data}
-        ],
-        max_completion_tokens=max_tokens,
+        system=prompt,
+        messages=[{"role": "user", "content": data}],
+        max_tokens=max_tokens,
     )
-    return response.choices[0].message.content
+    return response.content[0].text
 
 
 def generate_talent_description(all_experiences, person_name, max_tokens: int = 150) -> str:
@@ -343,12 +343,12 @@ def retrieve_context(query_embedding, query_text, top_n=5):
 
 def ask_monty_with_rag(prompt, row_text, max_tokens=1000, top_n=5):
 
-    # Initialize OpenAI client
-    client = OpenAI(api_key=openai_api_key)
+    # OpenAI for embeddings (no Anthropic equivalent)
+    openai_client = OpenAI(api_key=openai_api_key)
 
     # Embed the query
     combined_string = f"{prompt}\n\n{row_text}"
-    embedding_response = client.embeddings.create(model="text-embedding-3-small", input=combined_string)
+    embedding_response = openai_client.embeddings.create(model="text-embedding-3-small", input=combined_string)
     query_embedding = embedding_response.data[0].embedding
 
     context_string = retrieve_context(query_embedding, row_text, top_n)
@@ -356,18 +356,16 @@ def ask_monty_with_rag(prompt, row_text, max_tokens=1000, top_n=5):
     # Build the augmented prompt
     augmented_prompt = f"{prompt}\n\nRelevant Context:\n{context_string}\n"
 
-    # Generate GPT response
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {"role": "system", "content": augmented_prompt},
-            {"role": "user", "content": row_text}
-        ],
+    # Generate Claude response
+    claude_client = anthropic.Anthropic(api_key=claude_api_key)
+    response = claude_client.messages.create(
+        model="claude-haiku-4-5-20251001",
+        system=augmented_prompt,
+        messages=[{"role": "user", "content": row_text}],
         max_tokens=max_tokens,
-        temperature=0.5
     )
 
-    return response.choices[0].message.content
+    return response.content[0].text
 
 import asyncio
 
@@ -685,7 +683,7 @@ Be concise, insightful, specific, and only identify genuine trends that span mul
 Identify 1-3 themes/patterns that span MULTIPLE deals and format as specified above. Remember: one deal does not indicate a trend. Use the article excerpts to understand what each company actually does - focus on specific use cases and business models, not vague descriptions."""
 
     try:
-        response = ask_monty(prompt, data, max_tokens=max_tokens, model="gpt-4o")
+        response = ask_monty(prompt, data, max_tokens=max_tokens, model="claude-sonnet-4-6")
 
         if not response or not response.strip():
             print("  ⚠️  synthesize_deals: model returned empty response")

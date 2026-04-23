@@ -821,8 +821,7 @@ def parse_raw_alert(email):
     return text, links
 
 def check_if_true_alert(alert):
-    from openai import OpenAI
-    
+
     # Extract alert text and search keywords
     alert_text = alert.get('text', '')
     search_keywords = alert.get('search_keywords', '')
@@ -859,22 +858,20 @@ def check_if_true_alert(alert):
     Analyze the alert text and respond with ONLY "RELEVANT" or "IRRELEVANT" followed by a one-sentence explanation.
     """
     
-    # Get response from OpenAI using nano model (gpt-4o-mini)
+    # Get response from Claude
     try:
-        openai_api_key = os.getenv("OPENAI_API_KEY")
-        if not openai_api_key:
-            raise ValueError("OPENAI_API_KEY not found in environment variables")
-        
-        client = OpenAI(api_key=openai_api_key)
-        response_obj = client.chat.completions.create(
-            model="gpt-4o-mini",  # Using nano model
-            messages=[
-                {"role": "user", "content": prompt}
-            ],
+        import anthropic
+        claude_api_key = os.getenv("CLAUDE_API_KEY")
+        if not claude_api_key:
+            raise ValueError("CLAUDE_API_KEY not found in environment variables")
+
+        client = anthropic.Anthropic(api_key=claude_api_key)
+        response_obj = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            messages=[{"role": "user", "content": prompt}],
             max_tokens=200,
-            temperature=0.5
         )
-        response = response_obj.choices[0].message.content
+        response = response_obj.content[0].text
     except Exception as e:
         print(f"Error getting OpenAI response: {e}")
         response = "Unable to process."

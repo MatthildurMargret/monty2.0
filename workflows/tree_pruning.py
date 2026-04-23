@@ -692,15 +692,14 @@ def update_tree_with_recent_deals(tree_json, deals_csv_path="data/deal_data/all_
     import pandas as pd
     from datetime import datetime, timedelta
     import re
-    from openai import OpenAI
+    import anthropic
     import os
     from dotenv import load_dotenv
-    
-    # Load OpenAI client
+
+    # Load Anthropic client
     load_dotenv()
-    openai_api_key = os.getenv("OPENAI_API_KEY")
-    client = OpenAI(api_key=openai_api_key)
-    
+    client = anthropic.Anthropic(api_key=os.getenv("CLAUDE_API_KEY"))
+
     # Load deals data
     try:
         deals_df = pd.read_csv(deals_csv_path)
@@ -822,17 +821,14 @@ STOP
             """
         
         try:
-            response = client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[
-                    {"role": "system", "content": "You are an investment analyst deciding the best category for a new deal."},
-                    {"role": "user", "content": prompt.strip()}
-                ],
-                temperature=0.2,
-                max_tokens=30
+            response = client.messages.create(
+                model="claude-haiku-4-5-20251001",
+                system="You are an investment analyst deciding the best category for a new deal.",
+                messages=[{"role": "user", "content": prompt.strip()}],
+                max_tokens=30,
             )
-            
-            choice = response.choices[0].message.content.strip()
+
+            choice = response.content[0].text.strip()
             
             if choice == "STOP":
                 return path
@@ -1279,20 +1275,19 @@ def update_tree_with_portfolio_companies(tree_json=None, portfolio_csv_path="dat
     """
     import pandas as pd
     import json
-    from openai import OpenAI
+    import anthropic
     import os
     from dotenv import load_dotenv
-    
+
     # Load tree if not provided
     if tree_json is None:
         with open('data/taste_tree.json', 'r') as f:
             tree_json = json.load(f)
-    
-    # Load OpenAI client
+
+    # Load Anthropic client
     load_dotenv()
-    openai_api_key = os.getenv("OPENAI_API_KEY")
-    client = OpenAI(api_key=openai_api_key)
-    
+    client = anthropic.Anthropic(api_key=os.getenv("CLAUDE_API_KEY"))
+
     # Load portfolio data
     try:
         portfolio_df = pd.read_csv(portfolio_csv_path)
@@ -1404,18 +1399,15 @@ STOP
             """
         
         try:
-            response = client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[
-                    {"role": "system", "content": "You are an investment analyst deciding the best category for a portfolio company."},
-                    {"role": "user", "content": prompt.strip()}
-                ],
-                temperature=0.2,
-                max_tokens=30
+            response = client.messages.create(
+                model="claude-haiku-4-5-20251001",
+                system="You are an investment analyst deciding the best category for a portfolio company.",
+                messages=[{"role": "user", "content": prompt.strip()}],
+                max_tokens=30,
             )
-            
-            choice = response.choices[0].message.content.strip()
-            
+
+            choice = response.content[0].text.strip()
+
             if choice == "STOP":
                 return path
 
@@ -1641,20 +1633,19 @@ def update_tree_with_pipeline_companies(tree_json=None, notion_database_id=None,
         tuple: (updated_tree, companies_added_count, companies_processed)
     """
     import json
+    import anthropic
     import os
     from dotenv import load_dotenv
-    from openai import OpenAI
     import pandas as pd
-    
+
     # Load tree if not provided
     if tree_json is None:
         with open('data/taste_tree.json', 'r') as f:
             tree_json = json.load(f)
 
-    # Load OpenAI client
+    # Load Anthropic client
     load_dotenv()
-    openai_api_key = os.getenv("OPENAI_API_KEY")
-    client = OpenAI(api_key=openai_api_key)
+    client = anthropic.Anthropic(api_key=os.getenv("CLAUDE_API_KEY"))
 
     # Import pipeline from Notion
     try:
@@ -1775,16 +1766,13 @@ Respond with just the category name, or "STOP" if the current level is appropria
 """
 
         try:
-            response = client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[
-                    {"role": "system", "content": "You are an investment analyst deciding the best category for a pipeline company."},
-                    {"role": "user", "content": prompt.strip()}
-                ],
-                temperature=0.2,
-                max_tokens=30
+            response = client.messages.create(
+                model="claude-haiku-4-5-20251001",
+                system="You are an investment analyst deciding the best category for a pipeline company.",
+                messages=[{"role": "user", "content": prompt.strip()}],
+                max_tokens=30,
             )
-            choice = response.choices[0].message.content.strip()
+            choice = response.content[0].text.strip()
 
             if choice == "STOP":
                 return path

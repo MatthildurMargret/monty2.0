@@ -769,34 +769,25 @@ def _llm_relevance_filter(r: dict, vertical: str) -> tuple[bool, str]:
     Returns (keep: bool, reason: str).
     """
     try:
-        from openai import OpenAI
-        client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        import anthropic
+        client = anthropic.Anthropic(api_key=os.getenv("CLAUDE_API_KEY"))
         text = f"Title: {r['title']}\n\nHighlights:\n" + "\n".join(r["highlights"])
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You are a venture capital analyst screening founder profiles. "
-                        "Given a founder's LinkedIn title and highlights, decide if: "
-                        "(1) they appear to be founding or co-founding an early-stage startup (not just an employee or executive at an established company), AND "
-                        "(2) that startup is relevant or adjacent to the specified vertical. "
-                        "Be lenient on relevance — if there is a reasonable connection, lean YES. "
-                        "Only answer NO if the profile is clearly not a startup founder, or clearly unrelated to the vertical. "
-                        "Reply with YES or NO followed by a short reason on the same line. "
-                        "Example: YES — founding an AI simulation startup for engineering workflows"
-                    ),
-                },
-                {
-                    "role": "user",
-                    "content": f"Vertical: {vertical}\n\n{text}",
-                },
-            ],
+        response = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            system=(
+                "You are a venture capital analyst screening founder profiles. "
+                "Given a founder's LinkedIn title and highlights, decide if: "
+                "(1) they appear to be founding or co-founding an early-stage startup (not just an employee or executive at an established company), AND "
+                "(2) that startup is relevant or adjacent to the specified vertical. "
+                "Be lenient on relevance — if there is a reasonable connection, lean YES. "
+                "Only answer NO if the profile is clearly not a startup founder, or clearly unrelated to the vertical. "
+                "Reply with YES or NO followed by a short reason on the same line. "
+                "Example: YES — founding an AI simulation startup for engineering workflows"
+            ),
+            messages=[{"role": "user", "content": f"Vertical: {vertical}\n\n{text}"}],
             max_tokens=60,
-            temperature=0,
         )
-        answer = (response.choices[0].message.content or "").strip()
+        answer = (response.content[0].text or "").strip()
         keep = answer.upper().startswith("YES")
         return keep, answer
     except Exception as e:

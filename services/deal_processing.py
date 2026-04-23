@@ -11,47 +11,44 @@ from bs4 import BeautifulSoup
 from urllib.parse import urlparse
 
 from services.openai_api import web_search
-from openai import OpenAI
+import anthropic
 from datetime import datetime
 
-# Initialize OpenAI client
-_openai_client = None
+# Initialize Anthropic client
+_anthropic_client = None
 
-def get_openai_client():
-    """Get or create OpenAI client instance."""
-    global _openai_client
-    if _openai_client is None:
-        openai_api_key = os.getenv("OPENAI_API_KEY")
-        if not openai_api_key:
-            raise ValueError("OPENAI_API_KEY not found in environment variables")
-        _openai_client = OpenAI(api_key=openai_api_key)
-    return _openai_client
+def get_anthropic_client():
+    """Get or create Anthropic client instance."""
+    global _anthropic_client
+    if _anthropic_client is None:
+        claude_api_key = os.getenv("CLAUDE_API_KEY")
+        if not claude_api_key:
+            raise ValueError("CLAUDE_API_KEY not found in environment variables")
+        _anthropic_client = anthropic.Anthropic(api_key=claude_api_key)
+    return _anthropic_client
 
-def get_openai_response(prompt, model="gpt-4o-mini", max_tokens=1000):
+def get_openai_response(prompt, model="claude-haiku-4-5-20251001", max_tokens=1000):
     """
-    Get a response from OpenAI API using the nano model (gpt-4o-mini).
-    
+    Get a response from Claude API.
+
     Args:
         prompt: The prompt to send to the model
-        model: The model to use (default: gpt-4o-mini, the nano model)
+        model: The model to use (default: claude-haiku-4-5-20251001)
         max_tokens: Maximum tokens in the response
-    
+
     Returns:
         str: The model's response
     """
     try:
-        client = get_openai_client()
-        response = client.chat.completions.create(
+        client = get_anthropic_client()
+        response = client.messages.create(
             model=model,
-            messages=[
-                {"role": "user", "content": prompt}
-            ],
+            messages=[{"role": "user", "content": prompt}],
             max_tokens=max_tokens,
-            temperature=0.5
         )
-        return response.choices[0].message.content
+        return response.content[0].text
     except Exception as e:
-        print(f"Error getting OpenAI response: {e}")
+        print(f"Error getting Claude response: {e}")
         return "Unable to process."
 
 def normalize_company_name(company_name):

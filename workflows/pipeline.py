@@ -2,16 +2,16 @@ import json
 import pandas as pd
 from collections import defaultdict, Counter
 from services.notion import import_pipeline
-from openai import OpenAI
+import anthropic
 import os
 from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
 
-# Initialize OpenAI client
-openai_api_key = os.getenv("OPENAI_API_KEY")
-client = OpenAI(api_key=openai_api_key)
+# Initialize Anthropic client
+claude_api_key = os.getenv("CLAUDE_API_KEY")
+client = anthropic.Anthropic(api_key=claude_api_key)
 
 def load_tree(json_path):
     """Load the investment tree JSON file."""
@@ -73,17 +73,14 @@ STOP
     """
     
     try:
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": "You are an investment analyst deciding the best category for a company."},
-                {"role": "user", "content": prompt.strip()}
-            ],
-            temperature=0.2,
-            max_tokens=30
+        response = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            system="You are an investment analyst deciding the best category for a company.",
+            messages=[{"role": "user", "content": prompt.strip()}],
+            max_tokens=30,
         )
-        
-        choice = response.choices[0].message.content.strip()
+
+        choice = response.content[0].text.strip()
         
         if choice == "STOP" or choice not in node["children"]:
             return path

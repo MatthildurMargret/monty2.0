@@ -714,89 +714,78 @@ def generate_html(preseed_df, tracking_df, recs, pipeline_dict,
             if category not in recs_dict or not recs_dict[category]:
                 continue
 
-            subcategories = recs_dict[category]
             insights_html += f"<h4>{category}</h4>"
 
-            # Stats overview
-            stats = pipeline_dict['subcategories_by_category'].get(category, [])
+            # Group sub entries by subcategory so the header only appears once
+            grouped = {}  # subcategory_name -> list of sub entries (preserving order)
+            for sub in recs_dict[category]:
+                subcat = sub.get("subcategory", "General")
+                grouped.setdefault(subcat, []).append(sub)
 
-            # Recommendations per subcategory
-            for sub in subcategories:
-                founders = sub.get("founders", [])
-                deals = sub.get("deal_activity", [])
-                interest = sub.get("interest", "")
-                founder = None
-                if founders:
-                    founder = founders[0]
-                else:
-                    top_founder = sub.get("top_founder")
-                    if top_founder:
-                        founder = top_founder
+            for subcat_name, sub_entries in grouped.items():
+                # Collect all unique founders for this subcategory
+                founders_for_subcat = []
+                for sub in sub_entries:
+                    f = sub.get("founders", [None])[0] if sub.get("founders") else sub.get("top_founder")
+                    if not f:
+                        continue
+                    key = f"{f.get('name', '')}|{f.get('company_name', '')}"
+                    if key not in seen_founders:
+                        seen_founders.add(key)
+                        founders_for_subcat.append((f, sub))
 
-                if not founder:
+                if not founders_for_subcat:
                     continue
 
-                name = founder.get("name", "")
-                company_name = founder.get("company_name", "Unknown")
-                
-                # Create unique identifier for deduplication
-                founder_key = f"{name}|{company_name}"
-                
-                # Skip if we've already included this founder
-                if founder_key in seen_founders:
-                    continue
-                
-                # Only add subcategory header if we have a founder to display
-                # Compose inline list of pipeline company names (top 5)
-                inline_names = get_pipeline_company_names(sub['subcategory'])
+                # Subcategory header — rendered exactly once
+                inline_names = get_pipeline_company_names(subcat_name)
                 inline_str = f" - based on interest in {', '.join(inline_names)}, maybe check out:" if inline_names else ""
-                insights_html += f"<p><strong>{sub['subcategory']}</strong>{inline_str} </p>"
+                insights_html += f"<p><strong>{subcat_name}</strong>{inline_str} </p>"
                 insights_html += "<div class='cards-container'>"
-                
-                seen_founders.add(founder_key)
-                
-                # Build location text in the format:  · {location}
-                raw_location = founder.get("location", "")
-                if raw_location and not pd.isna(raw_location) and str(raw_location) not in ["None", "nan", "Not available"]:
-                    location_clean = re.sub(r'\s+', ' ', str(raw_location).strip())
-                    location_clean = location_clean.split(",")[0]
-                    location = f"Based in {location_clean}"
-                else:
-                    location = ""
-                tags_html = format_tags(founder.get("verticals", ""))
-                company_html = format_company_tags(founder.get("company_tags", ""))
-                profile_url = fix_url(founder.get("profile_url", "#"))
-                short_description = founder.get("product", "")
-                thesis_html = format_thesis_tags(founder.get("tree_thesis", ""))
-                repeat_tag = format_founder_tags(founder.get("repeat_founder", ""))
-                company_website = fix_url(founder.get("company_website", "#"))
 
-                context_blurb = summarize_company_recommendation(
-                    interest=interest,
-                    company_description=short_description,
-                    company_name=company_name,
-                    subcategory=sub.get("subcategory", "")
-                )
+                for founder, sub in founders_for_subcat:
+                    deals = sub.get("deal_activity", [])
+                    interest = sub.get("interest", "")
 
-                # Build deal activity box (same style as why-box) if we have recent news (for separate display)
-                deal_box_html = ""
-                recent_news = ""
-                if isinstance(deals, dict):
-                    recent_news = deals.get('recent_news', '') or ''
-                
-                if isinstance(recent_news, str) and recent_news.strip():
-                    # Clean, dedupe and reformat dates to end of line
-                    deal_content = format_recent_news(recent_news)
-                    deal_box_html = f"""
+                    name = founder.get("name", "")
+                    company_name = founder.get("company_name", "Unknown")
+
+                    raw_location = founder.get("location", "")
+                    if raw_location and not pd.isna(raw_location) and str(raw_location) not in ["None", "nan", "Not available"]:
+                        location_clean = re.sub(r'\s+', ' ', str(raw_location).strip())
+                        location_clean = location_clean.split(",")[0]
+                        location = f"Based in {location_clean}"
+                    else:
+                        location = ""
+                    tags_html = format_tags(founder.get("verticals", ""))
+                    company_html = format_company_tags(founder.get("company_tags", ""))
+                    profile_url = fix_url(founder.get("profile_url", "#"))
+                    short_description = founder.get("product", "")
+                    thesis_html = format_thesis_tags(founder.get("tree_thesis", ""))
+                    repeat_tag = format_founder_tags(founder.get("repeat_founder", ""))
+                    company_website = fix_url(founder.get("company_website", "#"))
+
+                    context_blurb = summarize_company_recommendation(
+                        interest=interest,
+                        company_description=short_description,
+                        company_name=company_name,
+                        subcategory=subcat_name,
+                    )
+
+                    recent_news = ""
+                    if isinstance(deals, dict):
+                        recent_news = deals.get('recent_news', '') or ''
+                    deal_box_html = ""
+                    if isinstance(recent_news, str) and recent_news.strip():
+                        deal_content = format_recent_news(recent_news)
+                        deal_box_html = f"""
     <div class='why-box'>
         <strong>Recent deal activity:</strong> {deal_content}
-    </div>
-                    """
+    </div>"""
 
-                # Build the "Why?" section
-                why_section_html = f"<strong>Why {company_name}? </strong> {context_blurb}"
+                    why_section_html = f"<strong>Why {company_name}? </strong> {context_blurb}"
 
-                insights_html += f"""
+                    insights_html += f"""
 <div class='company-card'>
     <div class='card-header'>
         <div class='founder-info'>

@@ -112,18 +112,18 @@ def get_groq_response(prompt, model=free_models[0]):
                 current_model = model
                 time.sleep(retry_delay * (2 ** attempt) + random.random() * 0.5)
     
-    # If all Groq models fail, fall back to OpenAI
+    # If all Groq models fail, fall back to Claude
     logger.error("Groq request failed after retries for prompt prefix: %s", prompt[:80])
     try:
-        from openai import OpenAI
-        openai_client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
-        resp = openai_client.chat.completions.create(
-            model="gpt-4o-mini",
+        import anthropic
+        claude_client = anthropic.Anthropic(api_key=os.environ.get("CLAUDE_API_KEY"))
+        resp = claude_client.messages.create(
+            model="claude-haiku-4-5-20251001",
             messages=[{"role": "user", "content": prompt}],
             max_tokens=500,
         )
-        logger.info("Groq fallback to OpenAI succeeded")
-        return resp.choices[0].message.content
+        logger.info("Groq fallback to Claude succeeded")
+        return resp.content[0].text
     except Exception as e:
-        logger.error("OpenAI fallback also failed: %s", e)
+        logger.error("Claude fallback also failed: %s", e)
         return "Unable to process."

@@ -1,4 +1,4 @@
-from openai import OpenAI
+import anthropic
 import os
 import json
 import pandas as pd
@@ -6,9 +6,9 @@ from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
-openai_api_key = os.getenv("OPENAI_API_KEY")
+claude_api_key = os.getenv("CLAUDE_API_KEY")
 
-client = OpenAI(api_key=openai_api_key)
+client = anthropic.Anthropic(api_key=claude_api_key)
 
 def get_tree_path():
     """Get the correct path to taste_tree.json relative to the project root."""
@@ -205,16 +205,13 @@ IF there is no good match for the company or we are at a sufficiently high level
 
 """
 
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {"role": "system", "content": "You are an investment analyst at Montage Ventures."},
-            {"role": "user", "content": prompt.strip()}
-        ],
-        temperature=0.2,
-        max_tokens=30
+    response = client.messages.create(
+        model="claude-haiku-4-5-20251001",
+        system="You are an investment analyst at Montage Ventures.",
+        messages=[{"role": "user", "content": prompt.strip()}],
+        max_tokens=30,
     )
-    choice = response.choices[0].message.content.strip()
+    choice = response.content[0].text.strip()
     choice = clean_category_output(choice)
 
     # Retry if invalid
@@ -228,7 +225,7 @@ IF there is no good match for the company or we are at a sufficiently high level
     Do not add extra words, explanations, or formatting.
     Examples of valid outputs: Payments, Robotics, AI for Supplier Discovery.
     Output must be ≤ 5 words, one line only.
-        
+
     Company:
     ---
     {company_description}
@@ -239,16 +236,13 @@ IF there is no good match for the company or we are at a sufficiently high level
     {child_context}
     ---
     """
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": "You are an investment analyst at Montage Ventures."},
-                {"role": "user", "content": retry_prompt.strip()}
-            ],
-            temperature=0,
-            max_tokens=20
+        response = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            system="You are an investment analyst at Montage Ventures.",
+            messages=[{"role": "user", "content": retry_prompt.strip()}],
+            max_tokens=20,
         )
-        choice = response.choices[0].message.content.strip()
+        choice = response.content[0].text.strip()
         choice = clean_category_output(choice)
         retry_count += 1
 
@@ -414,16 +408,13 @@ RECOMMENDATION: [Strong recommend/Recommend/Track/Neutral/Pass]
 JUSTIFICATION: [Maximum 4 sentences explaining your reasoning based on the path context. Be specific and include the exact input phrase that justifies the assignment.]
 """
 
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {"role": "system", "content": "You are an investment analyst at Montage Ventures."},
-            {"role": "user", "content": prompt.strip()}
-        ],
-        temperature=0.2,
-        max_tokens=100
+    response = client.messages.create(
+        model="claude-haiku-4-5-20251001",
+        system="You are an investment analyst at Montage Ventures.",
+        messages=[{"role": "user", "content": prompt.strip()}],
+        max_tokens=100,
     )
-    response = response.choices[0].message.content.strip()
+    response = response.content[0].text.strip()
     response += f"\nTHESIS: {final_thesis}"
     response += f"\nPATH: {path_titles}"
     
@@ -525,17 +516,14 @@ def suggest_leaf(trace, company_description):
     Respond only with the sub-category name (e.g., "Bidding Automation", "AI for Supplier Discovery") or "none".
     Return ONLY the bare sub-category name (or bare new sub-category suggestion) with no prefixes, no labels, no quotes, and no punctuation. For example, do NOT write "New sub-category: X" or "Sub-category: X" or "- X" — just write X."""
 
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {"role": "system", "content": "You are a thematic investment analyst at Montage Ventures."},
-            {"role": "user", "content": prompt.strip()}
-        ],
-        temperature=0.2,
-        max_tokens=20
+    response = client.messages.create(
+        model="claude-haiku-4-5-20251001",
+        system="You are a thematic investment analyst at Montage Ventures.",
+        messages=[{"role": "user", "content": prompt.strip()}],
+        max_tokens=20,
     )
-    response = response.choices[0].message.content.strip()
-    
+    response = response.content[0].text.strip()
+
     return response
 
 def add_leaf_to_tree(root, path, new_leaf_name, default_meta=None):
@@ -823,17 +811,14 @@ Healthcare | NEUTRAL
 STOP | LOW
     """
     
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {"role": "system", "content": "You are an investment analyst deciding both the best category and the investment status signal for a new insight."},
-            {"role": "user", "content": prompt.strip()}
-        ],
-        temperature=0.2,
-        max_tokens=30
+    response = client.messages.create(
+        model="claude-haiku-4-5-20251001",
+        system="You are an investment analyst deciding both the best category and the investment status signal for a new insight.",
+        messages=[{"role": "user", "content": prompt.strip()}],
+        max_tokens=30,
     )
-    
-    result = response.choices[0].message.content.strip()
+
+    result = response.content[0].text.strip()
     
     if "|" not in result:
         return path, None
@@ -1343,16 +1328,14 @@ Instructions:
 Respond with ONLY the category name or "STOP".
 """
     
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {"role": "system", "content": "You are an investment analyst categorizing portfolio companies into the most appropriate investment taxonomy categories."},
-            {"role": "user", "content": prompt}
-        ],
-        temperature=0.1
+    response = client.messages.create(
+        model="claude-haiku-4-5-20251001",
+        system="You are an investment analyst categorizing portfolio companies into the most appropriate investment taxonomy categories.",
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=30,
     )
-    
-    choice = response.choices[0].message.content.strip()
+
+    choice = response.content[0].text.strip()
     
     # Stop if LLM says to stop or choice is not in children
     if choice == "STOP" or choice not in node["children"]:
