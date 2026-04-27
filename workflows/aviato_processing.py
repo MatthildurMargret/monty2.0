@@ -982,13 +982,6 @@ def process_profiles_aviato(max_profiles=10):
         mapped['profile_url'] = url
         mapped = monty_enrich_profile(mapped)
 
-        # Age filter: skip founders estimated to be over 40
-        if mapped.get("founder"):
-            estimated_age = estimate_founder_age(mapped)
-            if estimated_age is not None and estimated_age > 40:
-                logger.info("Skipping %s — estimated age %d (first role too early)", mapped.get("name", url), estimated_age)
-                continue
-
         # Pedigree check: store result on profile so it can be filtered downstream.
         # Founders that fail are still saved to the DB (allows manual correction)
         # but will be excluded from recommendations via pedigree_passes IS DISTINCT FROM false.
