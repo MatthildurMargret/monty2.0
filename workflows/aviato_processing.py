@@ -722,7 +722,7 @@ Respond with only the JSON object, no other text."""
     try:
         client = anthropic.Anthropic(api_key=anthropic_key)
         message = client.messages.create(
-            model="claude-sonnet-4-6",
+            model="claude-haiku-4-5-20251001",
             max_tokens=150,
             messages=[{"role": "user", "content": f"{prompt}\n\n{data}"}]
         )
